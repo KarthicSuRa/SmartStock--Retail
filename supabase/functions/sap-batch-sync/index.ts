@@ -81,7 +81,10 @@ Deno.serve(async (req) => {
 
       // Generate simulated SAP PO details
       const poNum = (4500000000 + Math.floor(Math.random() * 9999999)).toString()
-      const sapPoId = `SAP-PO-${poNum}`
+      const isSto = requestData.document_type === 'STO'
+      const poPrefix = isSto ? 'SAP-STO-' : 'SAP-PO-'
+      const poType = isSto ? 'UB' : 'NB'
+      const sapPoId = `${poPrefix}${poNum}`
       
       // Compute authentic looking validation hash: SHA256 of the PO request
       const textEncoder = new TextEncoder()
@@ -96,8 +99,8 @@ Deno.serve(async (req) => {
       const purchaseOrderPayload = {
         PurchaseOrder: poNum,
         CompanyCode: "1000",
-        PurchaseOrderType: "NB",
-        Supplier: "VEND-10042",
+        PurchaseOrderType: poType,
+        Supplier: isSto ? "INTERNAL-PLANT-HUB" : "VEND-10042",
         PurchasingGroup: "001",
         PurchasingOrganization: "1000",
         to_PurchaseOrderItem: [
@@ -162,6 +165,7 @@ Deno.serve(async (req) => {
       .from('buffered_scraps')
       .select('*')
       .eq('sync_status', 'PENDING')
+      .neq('status', 'DELETED')
 
     if (scrapsError) {
       throw scrapsError

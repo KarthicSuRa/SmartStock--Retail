@@ -94,33 +94,64 @@ SELECT
     2
   )                                                        AS run_out_horizon_days,
 
-  -- Risk classification
+  -- Risk classification based on run-out horizon and safety stock ratios
   CASE
     WHEN (
       l.current_calculated_stock::NUMERIC /
       NULLIF(COALESCE(v.daily_velocity, 1.0), 0)
     ) <= 2.0
+    OR l.current_calculated_stock <= (l.sap_baseline_qty * 0.1)
     THEN 'CRITICAL_RISK'
 
     WHEN (
-      l.current_calculated_stock::NUMERIC /
-      NULLIF(COALESCE(v.daily_velocity, 1.0), 0)
-    ) > 2.0
-    AND (
-      l.current_calculated_stock::NUMERIC /
-      NULLIF(COALESCE(v.daily_velocity, 1.0), 0)
-    ) <= 5.0
+      (
+        l.current_calculated_stock::NUMERIC /
+        NULLIF(COALESCE(v.daily_velocity, 1.0), 0)
+      ) > 2.0
+      AND (
+        l.current_calculated_stock::NUMERIC /
+        NULLIF(COALESCE(v.daily_velocity, 1.0), 0)
+      ) <= 5.0
+    )
+    OR l.current_calculated_stock <= (l.sap_baseline_qty * 0.3)
     THEN 'REPLENISHMENT_NEEDED'
 
     ELSE 'STOCK_OK'
   END                                                      AS replenishment_status,
 
   l.last_sap_sync_at,
-  l.updated_at
+  l.updated_at,
+  l.merchandise_category,
+  
+  -- Additional fields from the join
+  r.netpr_price,
+  r.minbm_moq,
+  r.vendor_id,
+  r.vendor_name,
+  r.vendor_lead_days,
+  r.matkl_group,
+  COALESCE(inbound.total_inbound, 0)::INTEGER AS open_inbound_qty
 
 FROM public.live_inventory_ledger l
 LEFT JOIN public.v_sku_velocity_metrics v
   ON l.sku = v.sku
+LEFT JOIN public.erp_purchase_info_records r
+  ON l.sku = r.sku
+LEFT JOIN (
+    SELECT sku, SUM(open_inbound_qty) AS total_inbound
+    FROM public.erp_open_inbound_orders
+    GROUP BY sku
+) inbound ON l.sku = inbound.sku
+
+WHERE 
+    -- Condition 1: Product has run low on safety stock
+    l.current_calculated_stock <= (l.sap_baseline_qty * 0.3)
+    -- Condition 2: EXCLUDE items already sitting in our unsubmitted staging queue
+    AND l.sku NOT IN (
+        SELECT DISTINCT sku 
+        FROM public.pending_replenishments 
+        WHERE status = 'STAGED'
+    )
 
 ORDER BY run_out_horizon_days ASC NULLS FIRST;
 

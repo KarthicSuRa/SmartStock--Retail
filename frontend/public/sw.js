@@ -1,10 +1,9 @@
-// service worker placeholder for offline caching and sync
-const CACHE_NAME = 'sap-liveretail-v1';
+// service worker offline caching and sync
+const CACHE_NAME = 'sap-liveretail-v3';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
   '/manifest.json',
-  // Vite compiled assets will be cached dynamically or via Workbox precache in production
 ];
 
 self.addEventListener('install', (event) => {
@@ -22,6 +21,7 @@ self.addEventListener('activate', (event) => {
       return Promise.all(
         cacheNames.map((cache) => {
           if (cache !== CACHE_NAME) {
+            console.log('Clearing old service worker cache:', cache);
             return caches.delete(cache);
           }
         })
@@ -32,15 +32,22 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Offline-first resource fetching logic
+  // Network-first caching strategy to ensure users always see the latest dashboard updates
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-      return fetch(event.request).catch(() => {
-        // Fallback or custom offline page/resource
-      });
-    })
+    fetch(event.request)
+      .then((response) => {
+        // If response is valid, clone it and save to cache
+        if (response && response.status === 200 && response.type === 'basic') {
+          const responseToCache = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
+        }
+        return response;
+      })
+      .catch(() => {
+        // Fallback to cache if network fails
+        return caches.match(event.request);
+      })
   );
 });
