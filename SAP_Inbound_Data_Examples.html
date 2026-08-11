@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SAP Inbound Data — Worked Examples — SmartStock LiveRetail V1.2</title>
+  <style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --blue:    #1e40af;
+    --blue-lt: #dbeafe;
+    --slate:   #1e293b;
+    --muted:   #64748b;
+    --border:  #e2e8f0;
+    --bg:      #f8fafc;
+    --orange:  #92400e;
+    --orange-lt:#fef3c7;
+    --green:   #065f46;
+    --green-lt: #d1fae5;
+    --red:     #991b1b;
+    --red-lt:  #fee2e2;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 13.5px;
+    line-height: 1.65;
+    color: var(--slate);
+    background: white;
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 48px 56px;
+  }
+
+  /* Cover header strip */
+  .doc-header {
+    background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 50%, #1d4ed8 100%);
+    color: white;
+    border-radius: 12px;
+    padding: 36px 40px;
+    margin-bottom: 40px;
+  }
+  .doc-header .system-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #93c5fd;
+    margin-bottom: 8px;
+  }
+  .doc-header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    color: white;
+    margin-bottom: 12px;
+    border: none;
+    padding: 0;
+  }
+  .doc-header .meta-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-top: 20px;
+  }
+  .doc-header .meta-item label {
+    font-size: 9px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: #93c5fd;
+    display: block;
+    margin-bottom: 2px;
+  }
+  .doc-header .meta-item span {
+    font-size: 12px;
+    font-weight: 500;
+    color: white;
+  }
+
+  h1 { font-size: 22px; font-weight: 700; color: var(--blue); border-bottom: 3px solid var(--blue); padding-bottom: 10px; margin: 36px 0 20px; }
+  h2 { font-size: 17px; font-weight: 700; color: var(--slate); border-bottom: 2px solid var(--border); padding-bottom: 8px; margin: 32px 0 16px; }
+  h3 { font-size: 14.5px; font-weight: 600; color: var(--blue); margin: 24px 0 12px; }
+  h4 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin: 20px 0 10px; }
+  
+  p  { margin: 10px 0; color: #334155; }
+  strong { font-weight: 600; color: var(--slate); }
+  em { font-style: italic; color: var(--muted); }
+  hr { border: none; border-top: 2px solid var(--border); margin: 32px 0; }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11.5px;
+    margin: 16px 0 24px;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  thead { background: #1e40af; }
+  thead th {
+    color: white;
+    font-weight: 600;
+    font-size: 10.5px;
+    letter-spacing: 0.3px;
+    padding: 10px 12px;
+    text-align: left;
+    border: none;
+  }
+  tbody tr:nth-child(even) { background: #f1f5f9; }
+  tbody tr:hover { background: #e0f2fe; }
+  tbody td {
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    color: #334155;
+  }
+  tbody td code { font-size: 10.5px; }
+
+  /* Code */
+  code {
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    font-size: 11.5px;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    padding: 1px 5px;
+    border-radius: 4px;
+    color: #be185d;
+  }
+  pre {
+    background: #0f172a;
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 14px 0 20px;
+    overflow-x: auto;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  }
+  pre code {
+    font-size: 11px;
+    color: #e2e8f0;
+    background: transparent;
+    border: none;
+    padding: 0;
+    white-space: pre;
+    line-height: 1.7;
+  }
+
+  /* Alerts */
+  .alert { border-radius: 8px; padding: 12px 16px; margin: 16px 0; font-size: 12.5px; }
+  .alert-important { background: var(--orange-lt); border-left: 4px solid #d97706; color: var(--orange); }
+  .alert-note      { background: var(--green-lt);  border-left: 4px solid #059669; color: var(--green); }
+  .alert-warning   { background: var(--red-lt);    border-left: 4px solid #dc2626; color: var(--red); }
+  blockquote { background: #f0f9ff; border-left: 4px solid #3b82f6; padding: 10px 16px; border-radius: 0 8px 8px 0; margin: 12px 0; font-style: italic; color: #1e40af; font-size: 12.5px; }
+
+  ul { padding-left: 24px; margin: 10px 0; }
+  li { margin: 5px 0; color: #334155; }
+
+  /* Footer */
+  .doc-footer {
+    margin-top: 48px;
+    padding-top: 20px;
+    border-top: 2px solid var(--border);
+    font-size: 10.5px;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  @media print {
+    body { padding: 20px 28px; }
+    pre { page-break-inside: avoid; }
+    table { page-break-inside: avoid; }
+    h2, h3 { page-break-after: avoid; }
+    .doc-header { page-break-after: avoid; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    thead { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .alert { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+
+  <div class="doc-header">
+    <div class="system-label">SmartStock LiveRetail — S/4HANA Integration</div>
+    <h1>SAP Inbound Data — Worked Examples — SmartStock LiveRetail V1.2</h1>
+    <div class="meta-grid">
+      <div class="meta-item">
+        <label>Document Version</label>
+        <span>1.2</span>
+      </div>
+      <div class="meta-item">
+        <label>Prepared For</label>
+        <span>SAP BASIS / Integration Team</span>
+      </div>
+      <div class="meta-item">
+        <label>Generated</label>
+        <span>19 Jun 2026</span>
+      </div>
+    </div>
+  </div>
+
+  <h1>SAP Inbound Data — Worked Examples</h1>
+<h2>SmartStock LiveRetail — Real-Time Replenishment Engine</h2>
+<strong>Document Version:</strong> 1.2 <em>(Updated per S/4HANA Technical Data Requirements Runbook — SmartStock LiveRetail Replenishment Matrix V1.2)</em>  
+<strong>Purpose:</strong> Concrete, realistic examples of the exact JSON payloads that SAP S/4HANA returns for each inbound data category, alongside how SmartStock maps and stores each field.
+<hr>
+<h2>Example 1 — Purchasing Info Records</h2>
+<h3><code>API<em>INFORECORD_PROCESS</em>SRV</code> → <code>A_PurInfoRecPlantData</code></h3>
+<strong>Scenario:</strong> SmartStock triggers an overnight pull to fetch vendor pricing, MOQ, and lead times for all materials.
+<strong>SAP OData Request:</strong>
+<pre><code class="language-http">GET /sap/opu/odata/sap/API_INFORECORD_PROCESS_SRV/A_PurInfoRecPlantData
+    ?$format=json
+    &amp;$select=Material,MaterialGroup,Supplier,NetPrice,MinimumOrderQuantity,PlannedDeliveryDurationInDays
+    &amp;sap-client=100
+Authorization: Basic czRoYW5hX3VzZXI6cGFzc3dvcmQ=
+Accept: application/json
+</code></pre>
+<strong>SAP OData Raw JSON Response:</strong>
+<pre><code class="language-json">{
+  "d": {
+    "results": [
+      {
+        "Material": "MAT-FMCG-001",
+        "MaterialGroup": "FMCG",
+        "Supplier": "V-1001",
+        "SupplierName": "Rotterdam Dairy Co.",
+        "NetPrice": "1.25",
+        "MinimumOrderQuantity": 50,
+        "PlannedDeliveryDurationInDays": 2
+      },
+      {
+        "Material": "MAT-FMCG-002",
+        "MaterialGroup": "FMCG",
+        "Supplier": "V-1002",
+        "SupplierName": "Coca-Cola European Partners",
+        "NetPrice": "0.90",
+        "MinimumOrderQuantity": 100,
+        "PlannedDeliveryDurationInDays": 3
+      },
+      {
+        "Material": "MAT-FMCG-003",
+        "MaterialGroup": "FMCG",
+        "Supplier": "V-1001",
+        "SupplierName": "Rotterdam Dairy Co.",
+        "NetPrice": "2.50",
+        "MinimumOrderQuantity": 24,
+        "PlannedDeliveryDurationInDays": 2
+      },
+      {
+        "Material": "MAT-HDLN-001",
+        "MaterialGroup": "HARDLINES",
+        "Supplier": "V-1003",
+        "SupplierName": "Unilever NL",
+        "NetPrice": "14.99",
+        "MinimumOrderQuantity": 12,
+        "PlannedDeliveryDurationInDays": 5
+      }
+    ]
+  }
+}
+</code></pre>
+<strong>How SmartStock Stores This</strong> → Table: <code>erp<em>purchase_info</em>records</code>
+<table><thead><tr><th><code>sku</code></th><th><code>matkl_group</code></th><th><code>vendor_id</code></th><th><code>vendor_name</code></th><th><code>netpr_price</code></th><th><code>minbm_moq</code></th><th><code>vendor<em>lead</em>days</code></th></tr></thead><tbody><tr><td><code>MAT-FMCG-001</code></td><td><code>FMCG</code></td><td><code>V-1001</code></td><td>Rotterdam Dairy Co.</td><td><code>1.25</code></td><td><code>50</code></td><td><code>2</code></td></tr><tr><td><code>MAT-FMCG-002</code></td><td><code>FMCG</code></td><td><code>V-1002</code></td><td>Coca-Cola European Partners</td><td><code>0.90</code></td><td><code>100</code></td><td><code>3</code></td></tr><tr><td><code>MAT-FMCG-003</code></td><td><code>FMCG</code></td><td><code>V-1001</code></td><td>Rotterdam Dairy Co.</td><td><code>2.50</code></td><td><code>24</code></td><td><code>2</code></td></tr><tr><td><code>MAT-HDLN-001</code></td><td><code>HARDLINES</code></td><td><code>V-1003</code></td><td>Unilever NL</td><td><code>14.99</code></td><td><code>12</code></td><td><code>5</code></td></tr></tbody></table>
+<strong>What SmartStock Does With It:</strong>
+<ul><li><code>netpr_price</code> × recommended order qty = <strong>financial value of the replenishment order</strong></li><li><code>minbm_moq</code> = minimum units SmartStock can order (orders are rounded up to this value)</li><li><code>vendor<em>lead</em>days</code> = used to calculate <strong>Dynamic Reorder Point</strong> — if a SKU will run out within this many days, an alert fires immediately</li></ul>
+<hr>
+<h2>Example 2 — Open Purchase Orders (In-Transit Stock)</h2>
+<h3><code>API<em>PURCHASEORDER_PROCESS</em>SRV</code> → <code>A_PurchaseOrderItem</code></h3>
+<strong>Scenario:</strong> SmartStock checks which SKUs already have stock on the way from vendors, so it does not generate duplicate replenishment orders.
+<strong>SAP OData Request:</strong>
+<pre><code class="language-http">GET /sap/opu/odata/sap/API_PURCHASEORDER_PROCESS_SRV/A_PurchaseOrderItem
+    ?$format=json
+    &amp;$filter=OrderQuantity gt ReceivedQuantity and MandatoryPrcmtDocIsDeleted eq false
+    &amp;sap-client=100
+Authorization: Basic czRoYW5hX3VzZXI6cGFzc3dvcmQ=
+Accept: application/json
+</code></pre>
+<blockquote><strong>Sync frequency:</strong> 15-minute delta sweep. Only lines where <code>OrderQuantity > ReceivedQuantity</code> (still open) and <code>MandatoryPrcmtDocIsDeleted = false</code> (not cancelled) are returned.</blockquote>
+<strong>SAP OData Raw JSON Response:</strong>
+<pre><code class="language-json">{
+  "d": {
+    "results": [
+      {
+        "PurchaseOrder": "4500087341",
+        "PurchaseOrderItem": "00010",
+        "Material": "MAT-FMCG-001",
+        "Plant": "1001",
+        "StorageLocation": "0001",
+        "OrderQuantity": "200",
+        "ReceivedQuantity": "80",
+        "PurchaseOrderQuantityUnit": "PC",
+        "CorrespdgDeliveryDate": "/Date(1750204800000)/",
+        "MandatoryPrcmtDocIsDeleted": false
+      },
+      {
+        "PurchaseOrder": "4500087342",
+        "PurchaseOrderItem": "00010",
+        "Material": "MAT-FMCG-003",
+        "Plant": "1001",
+        "StorageLocation": "0001",
+        "OrderQuantity": "72",
+        "ReceivedQuantity": "24",
+        "PurchaseOrderQuantityUnit": "PC",
+        "CorrespdgDeliveryDate": "/Date(1750377600000)/",
+        "MandatoryPrcmtDocIsDeleted": false
+      },
+      {
+        "PurchaseOrder": "4500087400",
+        "PurchaseOrderItem": "00010",
+        "Material": "MAT-HDLN-001",
+        "Plant": "1002",
+        "StorageLocation": "0001",
+        "OrderQuantity": "48",
+        "ReceivedQuantity": "12",
+        "PurchaseOrderQuantityUnit": "PC",
+        "CorrespdgDeliveryDate": "/Date(1750636800000)/",
+        "MandatoryPrcmtDocIsDeleted": false
+      }
+    ]
+  }
+}
+</code></pre>
+<strong>How SmartStock Stores This</strong> → Table: <code>erp<em>open_inbound</em>orders</code>
+<table><thead><tr><th><code>sku</code></th><th><code>open<em>inbound</em>qty</code></th><th><code>estimated<em>delivery</em>date</code></th><th><em>Derived: OrderQty − ReceivedQty</em></th></tr></thead><tbody><tr><td><code>MAT-FMCG-001</code></td><td><code>120</code> <em>(200 − 80)</em></td><td><code>2025-06-18</code></td><td>Open: 120 of 200 ordered still in transit</td></tr><tr><td><code>MAT-FMCG-003</code></td><td><code>48</code> <em>(72 − 24)</em></td><td><code>2025-06-20</code></td><td>Open: 48 of 72 ordered still in transit</td></tr><tr><td><code>MAT-HDLN-001</code></td><td><code>36</code> <em>(48 − 12)</em></td><td><code>2025-06-23</code></td><td>Open: 36 of 48 ordered still in transit</td></tr></tbody></table>
+<strong>What SmartStock Does With It:</strong>
+<ul><li>If <code>MAT-FMCG-001</code> shows a deficit of 80 units, SmartStock checks: <strong>120 units already inbound → no new order needed</strong></li><li>The <code>net_deficit</code> = <code>raw_deficit</code> − <code>open<em>inbound</em>qty</code>. If this is ≤ 0, the replenishment alert is <strong>suppressed</strong></li><li>Prevents costly duplicate purchase orders being sent to SAP</li></ul>
+<hr>
+<h2>Example 3 — Overnight Inventory Baseline (Stock Quantities)</h2>
+<h3><code>API<em>MATERIAL_STOCK</em>SRV</code> → <code>A_MatlStkInAcctMod</code></h3>
+<strong>Scenario:</strong> At 02:00 each morning, SmartStock pulls the authoritative end-of-day physical stock quantities from SAP to reset each SKU's baseline. The intraday POS deduction counter (<code>pos<em>live</em>deductions</code>) is reset to zero.
+<strong>SAP OData Request:</strong>
+<pre><code class="language-http">GET /sap/opu/odata/sap/API_MATERIAL_STOCK_SRV/A_MatlStkInAcctMod
+    ?$format=json
+    &amp;$filter=Plant eq '1001'
+    &amp;$select=Material,Plant,StorageLocation,MaterialBaseUnit,MatlStkQtyInAcctMod
+    &amp;sap-client=100
+Authorization: Basic czRoYW5hX3VzZXI6cGFzc3dvcmQ=
+Accept: application/json
+</code></pre>
+<strong>SAP OData Raw JSON Response:</strong>
+<pre><code class="language-json">{
+  "d": {
+    "results": [
+      {
+        "Material": "MAT-FMCG-001",
+        "Plant": "1001",
+        "StorageLocation": "0001",
+        "MaterialBaseUnit": "PC",
+        "MatlStkQtyInAcctMod": "340",
+        "MaterialDescription": "Rotterdam Fresh Whole Milk 1L"
+      },
+      {
+        "Material": "MAT-FMCG-002",
+        "Plant": "1001",
+        "StorageLocation": "0001",
+        "MaterialBaseUnit": "PC",
+        "MatlStkQtyInAcctMod": "812",
+        "MaterialDescription": "Coca-Cola Classic 330ml Can"
+      },
+      {
+        "Material": "MAT-FMCG-003",
+        "Plant": "1001",
+        "StorageLocation": "0001",
+        "MaterialBaseUnit": "PC",
+        "MatlStkQtyInAcctMod": "56",
+        "MaterialDescription": "Rotterdam Gouda Cheese 400g"
+      },
+      {
+        "Material": "MAT-HDLN-001",
+        "Plant": "1001",
+        "StorageLocation": "0002",
+        "MaterialBaseUnit": "PC",
+        "MatlStkQtyInAcctMod": "22",
+        "MaterialDescription": "Dove Moisturising Body Wash 500ml"
+      }
+    ]
+  }
+}
+</code></pre>
+<strong>How SmartStock Stores This</strong> → Table: <code>live<em>inventory</em>ledger</code>
+<table><thead><tr><th><code>sap<em>plant</em>code</code></th><th><code>sap<em>storage</em>loc</code></th><th><code>sku</code></th><th><code>product_name</code></th><th><code>uom</code></th><th><code>sap<em>baseline</em>qty</code></th><th><code>pos<em>live</em>deductions</code></th><th><code>current<em>calculated</em>stock</code></th></tr></thead><tbody><tr><td><code>1001</code></td><td><code>0001</code></td><td><code>MAT-FMCG-001</code></td><td>Rotterdam Fresh Whole Milk 1L</td><td><code>PC</code></td><td><code>340</code></td><td><code>0</code></td><td><strong>340</strong></td></tr><tr><td><code>1001</code></td><td><code>0001</code></td><td><code>MAT-FMCG-002</code></td><td>Coca-Cola Classic 330ml Can</td><td><code>PC</code></td><td><code>812</code></td><td><code>0</code></td><td><strong>812</strong></td></tr><tr><td><code>1001</code></td><td><code>0001</code></td><td><code>MAT-FMCG-003</code></td><td>Rotterdam Gouda Cheese 400g</td><td><code>PC</code></td><td><code>56</code></td><td><code>0</code></td><td><strong>56</strong></td></tr><tr><td><code>1001</code></td><td><code>0002</code></td><td><code>MAT-HDLN-001</code></td><td>Dove Moisturising Body Wash 500ml</td><td><code>PC</code></td><td><code>22</code></td><td><code>0</code></td><td><strong>22</strong></td></tr></tbody></table>
+<strong>What SmartStock Does With It:</strong>
+<ul><li><code>sap<em>baseline</em>qty</code> is the "snapshot" loaded from SAP each night</li><li>As customers purchase items during the day, <code>pos<em>live</em>deductions</code> increases (e.g. 40 Milks sold → deductions = 40)</li><li><code>current<em>calculated</em>stock</code> is <strong>auto-computed</strong>: <code>340 − 40 = 300</code> — always live to the second</li></ul>
+<hr>
+<h2>Example 4 — Plant / Store Master Data</h2>
+<h3><code>API<em>PLANT</em>SRV</code> → Plant Organisational Data</h3>
+<strong>Scenario:</strong> SmartStock loads the plant directory to understand which plant codes map to which physical stores and distribution centres. This allows the UI to display human-readable store names and enables correct routing of stock transfers.
+<strong>SAP OData Raw JSON Response:</strong>
+<pre><code class="language-json">{
+  "d": {
+    "results": [
+      {
+        "Plant": "1001",
+        "PlantName": "Rotterdam Centraal Outlet",
+        "CityName": "Rotterdam",
+        "CountryKey": "NL",
+        "LanguageKey": "EN"
+      },
+      {
+        "Plant": "1002",
+        "PlantName": "Amsterdam Flagship Store",
+        "CityName": "Amsterdam",
+        "CountryKey": "NL",
+        "LanguageKey": "EN"
+      },
+      {
+        "Plant": "7001",
+        "PlantName": "Moerdijk Central Logistics Hub",
+        "CityName": "Moerdijk",
+        "CountryKey": "NL",
+        "LanguageKey": "EN"
+      }
+    ]
+  }
+}
+</code></pre>
+<strong>How SmartStock Stores This</strong> → Table: <code>erp_plants</code>
+<table><thead><tr><th><code>plant_id</code></th><th><code>plant_name</code></th><th><code>plant_type</code></th><th><code>city</code></th></tr></thead><tbody><tr><td><code>1001</code></td><td>Rotterdam Centraal Outlet</td><td><code>STORE</code></td><td>Rotterdam</td></tr><tr><td><code>1002</code></td><td>Amsterdam Flagship Store</td><td><code>STORE</code></td><td>Amsterdam</td></tr><tr><td><code>7001</code></td><td>Moerdijk Central Logistics Hub</td><td><code>DC</code></td><td>Moerdijk</td></tr></tbody></table>
+<strong>What SmartStock Does With It:</strong>
+<ul><li>Drives the <strong>multi-store plant selector</strong> in the UI — managers pick their store by name, not a 4-digit code</li><li><code>plant_type = DC</code> nodes are identified as <strong>lateral STO sources</strong>: if Rotterdam is critically low on <code>MAT-FMCG-001</code> but Moerdijk DC has 1,400 units, SmartStock surfaces an automatic stock transfer suggestion</li><li><code>plant_type = STORE</code> nodes participate in store-to-store STO suggestions when one store is overstocked</li></ul>
+<hr>
+<h2>Example 5 — Retail Promotions & Campaigns</h2>
+<h3><code>API<em>RETAILPROMOTION</em>SRV</code> → Promotion Master</h3>
+<strong>Scenario:</strong> The marketing team has loaded three upcoming promotions into SAP Retail. SmartStock pulls these to proactively calculate how much extra stock should be ordered before each event starts, preventing out-of-stocks during peak promotion windows.
+<strong>SAP OData Raw JSON Response:</strong>
+<pre><code class="language-json">{
+  "d": {
+    "results": [
+      {
+        "PromotionID": "PROMO-0041",
+        "Material": "MAT-FMCG-002",
+        "Plant": "1001",
+        "PromotionName": "Summer Cola Weekend",
+        "DiscountPercent": "20.00",
+        "ValidityStartDate": "/Date(1750550400000)/",
+        "ValidityEndDate": "/Date(1750723200000)/"
+      },
+      {
+        "PromotionID": "PROMO-0042",
+        "Material": "MAT-FMCG-001",
+        "Plant": "1001",
+        "PromotionName": "Dairy Fest — Week 26",
+        "DiscountPercent": "15.00",
+        "ValidityStartDate": "/Date(1751155200000)/",
+        "ValidityEndDate": "/Date(1751760000000)/"
+      },
+      {
+        "PromotionID": "PROMO-0043",
+        "Material": "MAT-HDLN-001",
+        "Plant": "1002",
+        "PromotionName": "Personal Care Flash Sale",
+        "DiscountPercent": "30.00",
+        "ValidityStartDate": "/Date(1750809600000)/",
+        "ValidityEndDate": "/Date(1750896000000)/"
+      }
+    ]
+  }
+}
+</code></pre>
+<strong>How SmartStock Stores This</strong> → Table: <code>sap<em>retail</em>promotions</code>
+<table><thead><tr><th><code>promotion_id</code></th><th><code>sku</code></th><th><code>plant_id</code></th><th><code>campaign_name</code></th><th><code>discount_percentage</code></th><th><code>uplift_factor</code></th><th><code>start_date</code></th><th><code>end_date</code></th></tr></thead><tbody><tr><td><code>PROMO-0041</code></td><td><code>MAT-FMCG-002</code></td><td><code>1001</code></td><td>Summer Cola Weekend</td><td><code>20.00</code></td><td><code>2.5</code></td><td><code>2025-06-22</code></td><td><code>2025-06-24</code></td></tr><tr><td><code>PROMO-0042</code></td><td><code>MAT-FMCG-001</code></td><td><code>1001</code></td><td>Dairy Fest — Week 26</td><td><code>15.00</code></td><td><code>1.8</code></td><td><code>2025-06-29</code></td><td><code>2025-07-06</code></td></tr><tr><td><code>PROMO-0043</code></td><td><code>MAT-HDLN-001</code></td><td><code>1002</code></td><td>Personal Care Flash Sale</td><td><code>30.00</code></td><td><code>3.0</code></td><td><code>2025-06-25</code></td><td><code>2025-06-26</code></td></tr></tbody></table>
+<strong>What SmartStock Does With It:</strong>
+<p>During an <strong>active promotion</strong>, the daily velocity used for replenishment calculations is overridden:</p>
+<pre><code>
+Normal Daily Velocity of MAT-FMCG-002 = (812 units / 30 days) = 27 units/day
+
+During "Summer Cola Weekend" (uplift_factor = 2.5):
+  Promotional Velocity = 27 × 2.5 = 67.5 units/day
+
+Run-Out Horizon = 812 ÷ 67.5 = 12 days  →  REPLENISHMENT_NEEDED alert fires early
+</code></pre>
+<ul><li>SmartStock alerts the store manager to <strong>pre-order extra stock before the promotion starts</strong></li><li>The <code>discount_percentage</code> is also surfaced in the replenishment UI so managers can communicate pricing to vendors</li><li>Once the promotion's <code>end_date</code> passes, the velocity reverts automatically to the normal POS-calculated value</li></ul>
+<hr>
+<h2>Full End-to-End Example — How All 5 Feed Into One Decision</h2>
+<blockquote><strong>Scenario:</strong> It is Monday morning. <code>MAT-FMCG-001</code> (Rotterdam Fresh Whole Milk 1L) at Plant 1001 needs a replenishment decision.</blockquote>
+<table><thead><tr><th>Data Source</th><th>Value Loaded</th><th>Impact on Decision</th></tr></thead><tbody><tr><td><strong>Baseline (Ex. 3)</strong></td><td><code>sap<em>baseline</em>qty = 340</code></td><td>Starting stock for the week</td></tr><tr><td><strong>POS Events</strong> <em>(intraday)</em></td><td><code>pos<em>live</em>deductions = 180</code> sold since last sync</td><td><code>current<em>calculated</em>stock = 340 − 180 = 160</code></td></tr><tr><td><strong>Info Record (Ex. 1)</strong></td><td><code>vendor<em>lead</em>days = 2</code>, <code>minbm_moq = 50</code>, <code>netpr_price = 1.25</code></td><td>Must order by today for 2-day delivery; order in multiples of 50</td></tr><tr><td><strong>Open PO (Ex. 2)</strong></td><td><code>open<em>inbound</em>qty = 120</code> already on the way</td><td><code>net_deficit = (target 300) − 160 − 120 = 20</code> → still need 20 more (round up to MOQ of 50)</td></tr><tr><td><strong>Promotion (Ex. 5)</strong></td><td><code>Dairy Fest</code> starts in 9 days, <code>uplift_factor = 1.8</code></td><td>Velocity spikes from 11/day to <strong>19.8/day</strong> → stock will run out in 8 days → order <strong>extra 60 units</strong> for promo buffer</td></tr><tr><td><strong>Plant Master (Ex. 4)</strong></td><td>Plant <code>1001</code> = Rotterdam Centraal Outlet, <code>7001</code> = Moerdijk DC</td><td>Checks if Moerdijk DC has surplus → surfaces lateral STO option to save cost</td></tr></tbody></table>
+<strong>Final SmartStock Recommendation:</strong>
+<blockquote>Order <strong>110 units</strong> of <code>MAT-FMCG-001</code> from <code>V-1001</code> (Rotterdam Dairy Co.) at <strong>€1.25/unit = €137.50</strong> — covering current net deficit + promotional uplift buffer. Alternatively, transfer 60 units from Moerdijk DC (Plant 7001) via STO at zero cost.</blockquote>
+<hr>
+<em>Document Version 1.2 — Updated per S/4HANA Technical Data Requirements Runbook. Source: SmartStock LiveRetail codebase — supabase/functions/sap-extractor/index.ts</em>
+
+  <div class="doc-footer">
+    <span>SmartStock LiveRetail — SAP S/4HANA Integration Documentation</span>
+    <span>Version 1.2 · Confidential</span>
+  </div>
+
+</body>
+</html>

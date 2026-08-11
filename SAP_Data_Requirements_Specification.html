@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SAP Data Requirements Specification — SmartStock LiveRetail V1.2</title>
+  <style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --blue:    #1e40af;
+    --blue-lt: #dbeafe;
+    --slate:   #1e293b;
+    --muted:   #64748b;
+    --border:  #e2e8f0;
+    --bg:      #f8fafc;
+    --orange:  #92400e;
+    --orange-lt:#fef3c7;
+    --green:   #065f46;
+    --green-lt: #d1fae5;
+    --red:     #991b1b;
+    --red-lt:  #fee2e2;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 13.5px;
+    line-height: 1.65;
+    color: var(--slate);
+    background: white;
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 48px 56px;
+  }
+
+  /* Cover header strip */
+  .doc-header {
+    background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 50%, #1d4ed8 100%);
+    color: white;
+    border-radius: 12px;
+    padding: 36px 40px;
+    margin-bottom: 40px;
+  }
+  .doc-header .system-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #93c5fd;
+    margin-bottom: 8px;
+  }
+  .doc-header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    color: white;
+    margin-bottom: 12px;
+    border: none;
+    padding: 0;
+  }
+  .doc-header .meta-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-top: 20px;
+  }
+  .doc-header .meta-item label {
+    font-size: 9px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: #93c5fd;
+    display: block;
+    margin-bottom: 2px;
+  }
+  .doc-header .meta-item span {
+    font-size: 12px;
+    font-weight: 500;
+    color: white;
+  }
+
+  h1 { font-size: 22px; font-weight: 700; color: var(--blue); border-bottom: 3px solid var(--blue); padding-bottom: 10px; margin: 36px 0 20px; }
+  h2 { font-size: 17px; font-weight: 700; color: var(--slate); border-bottom: 2px solid var(--border); padding-bottom: 8px; margin: 32px 0 16px; }
+  h3 { font-size: 14.5px; font-weight: 600; color: var(--blue); margin: 24px 0 12px; }
+  h4 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin: 20px 0 10px; }
+  
+  p  { margin: 10px 0; color: #334155; }
+  strong { font-weight: 600; color: var(--slate); }
+  em { font-style: italic; color: var(--muted); }
+  hr { border: none; border-top: 2px solid var(--border); margin: 32px 0; }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11.5px;
+    margin: 16px 0 24px;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  thead { background: #1e40af; }
+  thead th {
+    color: white;
+    font-weight: 600;
+    font-size: 10.5px;
+    letter-spacing: 0.3px;
+    padding: 10px 12px;
+    text-align: left;
+    border: none;
+  }
+  tbody tr:nth-child(even) { background: #f1f5f9; }
+  tbody tr:hover { background: #e0f2fe; }
+  tbody td {
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    color: #334155;
+  }
+  tbody td code { font-size: 10.5px; }
+
+  /* Code */
+  code {
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    font-size: 11.5px;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    padding: 1px 5px;
+    border-radius: 4px;
+    color: #be185d;
+  }
+  pre {
+    background: #0f172a;
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 14px 0 20px;
+    overflow-x: auto;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  }
+  pre code {
+    font-size: 11px;
+    color: #e2e8f0;
+    background: transparent;
+    border: none;
+    padding: 0;
+    white-space: pre;
+    line-height: 1.7;
+  }
+
+  /* Alerts */
+  .alert { border-radius: 8px; padding: 12px 16px; margin: 16px 0; font-size: 12.5px; }
+  .alert-important { background: var(--orange-lt); border-left: 4px solid #d97706; color: var(--orange); }
+  .alert-note      { background: var(--green-lt);  border-left: 4px solid #059669; color: var(--green); }
+  .alert-warning   { background: var(--red-lt);    border-left: 4px solid #dc2626; color: var(--red); }
+  blockquote { background: #f0f9ff; border-left: 4px solid #3b82f6; padding: 10px 16px; border-radius: 0 8px 8px 0; margin: 12px 0; font-style: italic; color: #1e40af; font-size: 12.5px; }
+
+  ul { padding-left: 24px; margin: 10px 0; }
+  li { margin: 5px 0; color: #334155; }
+
+  /* Footer */
+  .doc-footer {
+    margin-top: 48px;
+    padding-top: 20px;
+    border-top: 2px solid var(--border);
+    font-size: 10.5px;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  @media print {
+    body { padding: 20px 28px; }
+    pre { page-break-inside: avoid; }
+    table { page-break-inside: avoid; }
+    h2, h3 { page-break-after: avoid; }
+    .doc-header { page-break-after: avoid; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    thead { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .alert { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+
+  <div class="doc-header">
+    <div class="system-label">SmartStock LiveRetail — S/4HANA Integration</div>
+    <h1>SAP Data Requirements Specification — SmartStock LiveRetail V1.2</h1>
+    <div class="meta-grid">
+      <div class="meta-item">
+        <label>Document Version</label>
+        <span>1.2</span>
+      </div>
+      <div class="meta-item">
+        <label>Prepared For</label>
+        <span>SAP BASIS / Integration Team</span>
+      </div>
+      <div class="meta-item">
+        <label>Generated</label>
+        <span>19 Jun 2026</span>
+      </div>
+    </div>
+  </div>
+
+  <h1>SAP Data Requirements Specification</h1>
+<h2>SmartStock LiveRetail — Real-Time Replenishment Engine</h2>
+<strong>Document Version:</strong> 1.2 <em>(Updated per S/4HANA Technical Data Requirements Runbook — SmartStock LiveRetail Replenishment Matrix V1.2)</em>  
+<strong>Prepared For:</strong> Client SAP BASIS / Integration Team  
+<strong>Purpose:</strong> This document defines every SAP object, entity set, and field that the SmartStock platform requires read or write access to. It is intended to be handed to the SAP team to set up the OData Gateway configuration, user authorizations, and field-level access.
+<hr>
+<h2>Overview</h2>
+<p>SmartStock communicates with SAP S/4HANA via standard <strong>OData V2</strong> services exposed through the SAP API Gateway. All integration is stateless and REST-based. There are two directions of data flow:</p>
+<table><thead><tr><th>Direction</th><th>Data Feed</th><th>Sync Schedule</th><th>Mechanism</th></tr></thead><tbody><tr><td><strong>SAP → SmartStock</strong> (INBOUND)</td><td>Purchasing Info Records</td><td><strong>Weekly</strong></td><td>HTTP GET via OData V2</td></tr><tr><td><strong>SAP → SmartStock</strong> (INBOUND)</td><td>Transit Pipelines / Open POs</td><td><strong>Every 15 minutes</strong> (delta sweep)</td><td>HTTP GET via OData V2</td></tr><tr><td><strong>SAP → SmartStock</strong> (INBOUND)</td><td>Inventory Stock Baseline</td><td><strong>Nightly at 02:00</strong></td><td>HTTP GET via OData V2</td></tr><tr><td><strong>SmartStock → SAP</strong> (OUTBOUND)</td><td>Scrap Write-Back + PO Creation</td><td><strong>End-of-day aggregated batch</strong></td><td>HTTP POST <code>$batch</code> via OData V2</td></tr></tbody></table>
+<div class="alert alert-important">⚠️ <strong>Important:</strong> All outbound write-backs are <strong>aggregated and batched</strong> — they are never made in real time per transaction. This minimises SAP Digital Access licensing costs by collapsing thousands of individual events into a single daily document per store.</div>
+<hr>
+<h2>PART 1 — INBOUND DATA (SAP → SmartStock)</h2>
+<h3>1.1 — Purchasing Info Records (Pricing, MOQ & Lead Times)</h3>
+<strong>Business Purpose:</strong> Provides unit price, minimum order quantity, and vendor lead time for each SKU. Used to generate financially-validated replenishment recommendations and calculate purchase order values.
+<strong>SAP OData Service:</strong> <code>API<em>INFORECORD_PROCESS</em>SRV</code>  
+<strong>Entity Set:</strong> <code>A_PurInfoRecPlantData</code>  
+<strong>HTTP Method:</strong> <code>GET</code>  
+<strong>Response Format:</strong> <code>application/json</code>  
+<strong>Sync Schedule:</strong> <strong>Weekly loop</strong> — full refresh of all purchasing constraints  
+<strong>Trigger:</strong> Scheduled weekly pull via <strong><code>sap-extractor</code></strong> Edge Function
+<strong>Endpoint Pattern:</strong>
+<pre><code>
+GET {SAP_GATEWAY_BASE_URL}/sap/opu/odata/sap/API_INFORECORD_PROCESS_SRV/A_PurInfoRecPlantData
+    ?$format=json
+    &amp;$select=Material,MaterialGroup,Supplier,NetPrice,MinimumOrderQuantity,PlannedDeliveryDurationInDays
+    &amp;sap-client={SAP_CLIENT_ID}
+</code></pre>
+<strong>Field-Level Mapping:</strong>
+<table><thead><tr><th>SAP OData Field Name</th><th>SAP ABAP Technical Name</th><th>SAP Table</th><th>Data Type</th><th>Description</th><th>SmartStock DB Column</th></tr></thead><tbody><tr><td><code>Material</code></td><td><code>MATNR</code></td><td><code>MARA</code></td><td><code>VARCHAR(40)</code></td><td>Material/SKU number</td><td><code>erp<em>purchase_info</em>records.sku</code></td></tr><tr><td><code>MaterialGroup</code></td><td><code>MATKL</code></td><td><code>MARA</code></td><td><code>VARCHAR(20)</code></td><td>Material group classification (e.g. FMCG, HARDLINES)</td><td><code>erp<em>purchase_info_records.matkl</em>group</code></td></tr><tr><td><code>Supplier</code> <em>(formerly <code>Vendor</code>)</em></td><td><code>LIFNR</code></td><td><code>LFA1</code></td><td><code>VARCHAR(50)</code></td><td>Vendor/Supplier account number (Kreditor)</td><td><code>erp<em>purchase_info_records.vendor</em>id</code></td></tr><tr><td><code>SupplierName</code></td><td><code>NAME1</code></td><td><code>LFA1</code></td><td><code>VARCHAR(255)</code></td><td>Vendor/Supplier company name</td><td><code>erp<em>purchase_info_records.vendor</em>name</code></td></tr><tr><td><code>NetPrice</code></td><td><code>NETPR</code></td><td><code>EINE</code></td><td><code>NUMERIC(11,2)</code></td><td>Net purchase price per unit (in local currency)</td><td><code>erp<em>purchase_info_records.netpr</em>price</code></td></tr><tr><td><code>MinimumOrderQuantity</code></td><td><code>MINBM</code></td><td><code>EINE</code></td><td><code>INTEGER</code></td><td>Minimum order quantity from vendor</td><td><code>erp<em>purchase_info_records.minbm</em>moq</code></td></tr><tr><td><code>PlannedDeliveryDurationInDays</code> <em>(formerly <code>PlannedDeliveryDuration</code>)</em></td><td><code>PLIFZ</code></td><td><code>EINE</code></td><td><code>INTEGER</code></td><td>Vendor lead time in calendar days</td><td><code>erp<em>purchase_info_records.vendor_lead</em>days</code></td></tr><tr><td><code>RoundingValue</code> <em>(extended)</em></td><td><code>BSTRF</code></td><td><code>EINE</code></td><td><code>INTEGER</code></td><td>Order rounding value (pallet/case multiples)</td><td><code>erp<em>purchase_info_records.bstrf_rounding</em>val</code></td></tr></tbody></table>
+<hr>
+<h3>1.2 — Open Purchase Orders (In-Transit Stock)</h3>
+<strong>Business Purpose:</strong> Identifies which SKUs already have open inbound deliveries from vendors. This prevents duplicate replenishment orders for stock already on its way.
+<strong>SAP OData Service:</strong> <code>API<em>PURCHASEORDER_PROCESS</em>SRV</code>  
+<strong>Entity Set:</strong> <code>A_PurchaseOrderItem</code>  
+<strong>HTTP Method:</strong> <code>GET</code>  
+<strong>Response Format:</strong> <code>application/json</code>  
+<strong>Filter:</strong> <code>$filter=OrderQuantity gt ReceivedQuantity and MandatoryPrcmtDocIsDeleted eq false</code>  
+<strong>Sync Schedule:</strong> <strong>15-minute delta sweep</strong> — continuous in-transit quantity refresh  
+<strong>Trigger:</strong> Scheduled delta sweep via <strong><code>sap-extractor</code></strong> Edge Function
+<strong>Endpoint Pattern:</strong>
+<pre><code>
+GET {SAP_GATEWAY_BASE_URL}/sap/opu/odata/sap/API_PURCHASEORDER_PROCESS_SRV/A_PurchaseOrderItem
+    ?$format=json
+    &amp;$filter=OrderQuantity gt ReceivedQuantity and MandatoryPrcmtDocIsDeleted eq false
+    &amp;sap-client={SAP_CLIENT_ID}
+</code></pre>
+<div class="alert alert-note">📝 <strong>Note:</strong> The filter <code>OrderQuantity gt ReceivedQuantity</code> identifies lines where delivery is still open (not fully received). <code>MandatoryPrcmtDocIsDeleted eq false</code> excludes soft-deleted PO lines, ensuring only active transit pipelines are tracked.</div>
+<strong>Field-Level Mapping:</strong>
+<table><thead><tr><th>SAP OData Field Name</th><th>SAP ABAP Technical Name</th><th>SAP Table</th><th>Data Type</th><th>Description</th><th>SmartStock DB Column</th></tr></thead><tbody><tr><td><code>Material</code></td><td><code>MATNR</code></td><td><code>EKPO</code></td><td><code>VARCHAR(40)</code></td><td>Material/SKU number</td><td><code>erp<em>open_inbound</em>orders.sku</code></td></tr><tr><td><code>OrderQuantity</code></td><td><code>MENGE</code></td><td><code>EKPO</code></td><td><code>INTEGER</code></td><td>Total ordered quantity on the PO line</td><td><em>(used in filter comparison)</em></td></tr><tr><td><code>ReceivedQuantity</code></td><td><code>WEMNG</code></td><td><code>EKBE</code></td><td><code>INTEGER</code></td><td>Quantity already goods-receipted</td><td><em>(used in filter: <code>OrderQuantity gt ReceivedQuantity</code>)</em></td></tr><tr><td><code>CorrespdgDeliveryDate</code> <em>(formerly <code>DeliveryDate</code>)</em></td><td><code>EINDT</code></td><td><code>EKET</code></td><td><code>DATE</code></td><td>Confirmed scheduled delivery date from vendor</td><td><code>erp<em>open_inbound_orders.estimated_delivery</em>date</code></td></tr><tr><td><code>MandatoryPrcmtDocIsDeleted</code></td><td><code>LOEKZ</code></td><td><code>EKPO</code></td><td><code>BOOLEAN</code></td><td>Deletion indicator — filters out cancelled PO lines</td><td><em>(filter only — not stored)</em></td></tr><tr><td><code>PurchaseOrder</code></td><td><code>EBELN</code></td><td><code>EKKO</code></td><td><code>VARCHAR(10)</code></td><td>Purchase order document number</td><td><em>(referenced for logging)</em></td></tr><tr><td><code>Plant</code></td><td><code>WERKS</code></td><td><code>EKPO</code></td><td><code>VARCHAR(4)</code></td><td>Receiving plant code</td><td><em>(used for filtering)</em></td></tr></tbody></table>
+<hr>
+<h3>1.3 — Material Master & Plant Organisational Data</h3>
+<strong>Business Purpose:</strong> Defines the plant structure (stores, distribution centres, hubs) used to route replenishment and stock transfers correctly. Must be seeded or aligned with SAP Plant (WERKS) master data.
+<strong>SAP OData Service:</strong> <code>API<em>PLANT</em>SRV</code> <em>(or provided as a master data extract)</em>  
+<strong>SAP Object:</strong> Organisation Management — Plant (WERKS)  
+<strong>SmartStock Table:</strong> <code>erp_plants</code>
+<strong>Field-Level Mapping:</strong>
+<table><thead><tr><th>SAP OData Field Name</th><th>SAP ABAP Technical Name</th><th>SAP Table</th><th>Data Type</th><th>Description</th><th>SmartStock DB Column</th></tr></thead><tbody><tr><td><code>Plant</code></td><td><code>WERKS</code></td><td><code>T001W</code></td><td><code>VARCHAR(4)</code></td><td>SAP Plant code (4-char)</td><td><code>erp<em>plants.plant</em>id</code></td></tr><tr><td><code>PlantName</code></td><td><code>NAME1</code></td><td><code>T001W</code></td><td><code>VARCHAR(100)</code></td><td>Full plant description</td><td><code>erp<em>plants.plant</em>name</code></td></tr><tr><td><em>(Classification)</em></td><td>—</td><td>—</td><td><code>ENUM</code></td><td>Plant type: STORE, DC, HUB</td><td><code>erp<em>plants.plant</em>type</code></td></tr><tr><td><code>CityName</code></td><td><code>ORT01</code></td><td><code>T001W</code></td><td><code>VARCHAR(50)</code></td><td>City of the plant</td><td><code>erp_plants.city</code></td></tr></tbody></table>
+<hr>
+<h3>1.4 — Retail Promotion / Campaign Master</h3>
+<strong>Business Purpose:</strong> Identifies active marketing promotions that will create abnormal demand spikes. SmartStock uses this to apply an <code>uplift_factor</code> to daily velocity calculations, ensuring correct pre-promotion stock build-up.
+<strong>SAP OData Service:</strong> <code>API<em>RETAILPROMOTION</em>SRV</code> <em>(SAP Retail / CAR)</em>  
+<strong>SAP Object:</strong> Promotion (AKTNR)  
+<strong>SmartStock Table:</strong> <code>sap<em>retail</em>promotions</code>
+<strong>Field-Level Mapping:</strong>
+<table><thead><tr><th>SAP OData Field Name</th><th>SAP ABAP Technical Name</th><th>SAP Table</th><th>Data Type</th><th>Description</th><th>SmartStock DB Column</th></tr></thead><tbody><tr><td><code>PromotionID</code></td><td><code>AKTNR</code></td><td><code>WA01</code> / <code>WAKT</code></td><td><code>VARCHAR(10)</code></td><td>Unique promotion identifier</td><td><code>sap<em>retail_promotions.promotion</em>id</code></td></tr><tr><td><code>Material</code></td><td><code>MATNR</code></td><td><code>WAKT</code></td><td><code>VARCHAR(50)</code></td><td>Material affected by the promotion</td><td><code>sap<em>retail</em>promotions.sku</code></td></tr><tr><td><code>Plant</code></td><td><code>WERKS</code></td><td><code>WAKT</code></td><td><code>VARCHAR(4)</code></td><td>Applicable plant/store</td><td><code>sap<em>retail_promotions.plant</em>id</code></td></tr><tr><td><code>DiscountPercent</code></td><td><code>RABAT</code></td><td><code>WAKT</code></td><td><code>NUMERIC</code></td><td>Discount percentage offered</td><td><code>sap<em>retail_promotions.discount</em>percentage</code></td></tr><tr><td><code>ValidityStartDate</code></td><td><code>DATAB</code></td><td><code>WAKT</code></td><td><code>TIMESTAMP</code></td><td>Promotion start date/time</td><td><code>sap<em>retail_promotions.start</em>date</code></td></tr><tr><td><code>ValidityEndDate</code></td><td><code>DATBI</code></td><td><code>WAKT</code></td><td><code>TIMESTAMP</code></td><td>Promotion end date/time</td><td><code>sap<em>retail_promotions.end</em>date</code></td></tr><tr><td><code>PromotionName</code></td><td><code>AKTBEZ</code></td><td><code>WAKT</code></td><td><code>VARCHAR(100)</code></td><td>Campaign or promotion name</td><td><code>sap<em>retail_promotions.campaign</em>name</code></td></tr><tr><td><code>UpliftFactor</code> <em>(custom)</em></td><td>—</td><td>—</td><td><code>NUMERIC</code></td><td>Demand multiplier computed from SAP data</td><td><code>sap<em>retail_promotions.uplift</em>factor</code></td></tr></tbody></table>
+<hr>
+<h3>1.5 — Overnight Inventory Baseline (Stock Quantities)</h3>
+<strong>Business Purpose:</strong> Provides the authoritative end-of-day physical stock quantity per SKU per Plant/Storage Location. This is loaded once per night to reset the SmartStock ledger baseline, from which intraday POS deductions are applied.
+<strong>SAP OData Service:</strong> <code>API<em>MATERIAL_STOCK</em>SRV</code>  
+<strong>Entity Set:</strong> <code>A_MatlStkInAcctMod</code> <em>(Material Stock in Account Model)</em>  
+<strong>HTTP Method:</strong> <code>GET</code>  
+<strong>Filter:</strong> <code>$filter=Plant eq '{PLANT_CODE}'</code> <em>(parameterised per target plant)</em>  
+<strong>Sync Schedule:</strong> <strong>Nightly at 02:00</strong> — full stock baseline reset  
+<strong>SmartStock Table:</strong> <code>live<em>inventory</em>ledger</code>
+<strong>Field-Level Mapping:</strong>
+<table><thead><tr><th>SAP OData Field Name</th><th>SAP ABAP Technical Name</th><th>SAP Table</th><th>Data Type</th><th>Description</th><th>SmartStock DB Column</th></tr></thead><tbody><tr><td><code>Material</code></td><td><code>MATNR</code></td><td><code>MARA</code></td><td><code>VARCHAR(40)</code></td><td>Material/SKU number</td><td><code>live<em>inventory</em>ledger.sku</code></td></tr><tr><td><code>Plant</code></td><td><code>WERKS</code></td><td><code>MARC</code></td><td><code>VARCHAR(4)</code></td><td>Plant code</td><td><code>live<em>inventory_ledger.sap_plant</em>code</code></td></tr><tr><td><code>StorageLocation</code></td><td><code>LGORT</code></td><td><code>MARD</code></td><td><code>VARCHAR(4)</code></td><td>Storage location within plant</td><td><code>live<em>inventory_ledger.sap_storage</em>loc</code></td></tr><tr><td><code>MaterialBaseUnit</code></td><td><code>MEINS</code></td><td><code>MARA</code></td><td><code>VARCHAR(3)</code></td><td>Base unit of measure (PC, KG, L, etc.)</td><td><code>live<em>inventory</em>ledger.uom</code></td></tr><tr><td><code>MatlStkQtyInAcctMod</code></td><td><code>LABST</code></td><td><code>MARD</code></td><td><code>INTEGER</code></td><td>Unrestricted-use stock quantity</td><td><code>live<em>inventory_ledger.sap_baseline</em>qty</code></td></tr><tr><td><code>MaterialDescription</code></td><td><code>MAKTX</code></td><td><code>MAKT</code></td><td><code>VARCHAR(255)</code></td><td>Material short description</td><td><code>live<em>inventory_ledger.product</em>name</code></td></tr></tbody></table>
+<hr>
+<h2>PART 2 — OUTBOUND DATA (SmartStock → SAP)</h2>
+<h3>2.1 — Floor Scrap / Goods Issue Write-Back (Movement Type 551)</h3>
+<strong>Business Purpose:</strong> Posts aggregated in-store scrap records (spoiled, damaged, expired goods) to SAP Inventory Management as Goods Issues. These are buffered intraday and posted as a single consolidated batch document at end-of-day to minimise SAP Digital Access licensing charges.
+<strong>SAP OData Service:</strong> <code>API<em>MATERIAL_DOCUMENT</em>SRV</code>  
+<strong>Service Path:</strong> <code>/sap/opu/odata/sap/API<em>MATERIAL_DOCUMENT</em>SRV/A_MaterialDocumentHeader</code>  
+<strong>Entity Set:</strong> <code>A_MaterialDocumentHeader</code> + <code>A_MaterialDocumentItem</code>  
+<strong>HTTP Method:</strong> <code>POST</code> using multi-part atomic <strong><code>$batch</code></strong> packaging <em>(eliminates indirect system licensing overhead)</em>  
+<strong>SAP Movement Type:</strong> <code>551</code> (Scrapping from unrestricted stock)  
+<strong>Trigger:</strong> Daily scheduled run via <strong><code>sap-batch-sync</code></strong> Edge Function
+<strong>Outbound JSON Payload Structure (per batch item):</strong>
+<pre><code class="language-json">{
+  "GoodsMovementType": "551",
+  "Plant": "1001",
+  "StorageLocation": "0001",
+  "Material": "MAT-FMCG-001",
+  "EntryQuantity": 12,
+  "EntryUnit": "PC"
+}
+</code></pre>
+<strong>Field-Level Mapping:</strong>
+<table><thead><tr><th>SmartStock Source Field</th><th>SmartStock Table</th><th>SAP OData Field Name</th><th>SAP ABAP Technical Name</th><th>SAP Table</th><th>Description</th></tr></thead><tbody><tr><td><code>sku</code></td><td><code>buffered_scraps</code></td><td><code>Material</code></td><td><code>MATNR</code></td><td><code>MSEG</code></td><td>Material number being scrapped</td></tr><tr><td><code>sap<em>plant</em>code</code></td><td><code>buffered_scraps</code></td><td><code>Plant</code></td><td><code>WERKS</code></td><td><code>MSEG</code></td><td>Plant where scrap occurred</td></tr><tr><td><code>sap<em>storage</em>loc</code></td><td><code>buffered_scraps</code></td><td><code>StorageLocation</code></td><td><code>LGORT</code></td><td><code>MSEG</code></td><td>Storage location in plant</td></tr><tr><td><code>quantity</code> <em>(aggregated sum)</em></td><td><code>buffered_scraps</code></td><td><code>EntryQuantity</code></td><td><code>ERFMG</code></td><td><code>MSEG</code></td><td>Total quantity scrapped (aggregated)</td></tr><tr><td><code>uom</code></td><td><code>buffered_scraps</code></td><td><code>EntryUnit</code></td><td><code>ERFME</code></td><td><code>MSEG</code></td><td>Unit of measure</td></tr><tr><td><em>(hardcoded: "551")</em></td><td>—</td><td><code>GoodsMovementType</code></td><td><code>BWART</code></td><td><code>MSEG</code></td><td>SAP Movement Type for scrapping</td></tr><tr><td><code>scrap<em>reason</em>code</code></td><td><code>buffered_scraps</code></td><td><code>ReasonForMovement</code></td><td><code>GRUND</code></td><td><code>MSEG</code></td><td>Reason code for the scrap movement</td></tr></tbody></table>
+<strong>SAP Response Fields Stored by SmartStock:</strong>
+<table><thead><tr><th>SAP Response Field</th><th>SAP ABAP Technical Name</th><th>Description</th><th>SmartStock Column</th></tr></thead><tbody><tr><td><code>MaterialDocumentYear</code></td><td><code>MJAHR</code></td><td>Fiscal year of the SAP material document</td><td><code>buffered<em>scraps.sap_document</em>year</code></td></tr><tr><td><code>MaterialDocument</code></td><td><code>MBLNR</code></td><td>SAP Material Document number (audit reference)</td><td><code>buffered<em>scraps.sap_document</em>id</code></td></tr></tbody></table>
+<hr>
+<h3>2.2 — Purchase Order Creation (Standard Replenishment — Type NB)</h3>
+<strong>Business Purpose:</strong> Transmits approved purchase requisitions to SAP as standard purchase orders to replenish depleted stock from external vendors. The payload is assembled from approved staged requisitions grouped by vendor.
+<strong>SAP OData Service:</strong> <code>API<em>PURCHASEORDER_PROCESS</em>SRV</code>  
+<strong>Service Path:</strong> <code>/sap/opu/odata/sap/API<em>PURCHASEORDER_PROCESS</em>SRV/A_PurchaseOrder</code>  
+<strong>Entity Set:</strong> <code>A_PurchaseOrder</code> + <code>A_PurchaseOrderItem</code>  
+<strong>HTTP Method:</strong> <code>POST</code>  
+<strong>Document Type (PO Type):</strong> <code>NB</code> (Standard Purchase Order) / <code>UB</code> (Stock Transfer Order)  
+<strong>Mandatory Compliance Fields:</strong> <code>CompanyCode</code>, <code>PurchaseOrderType</code>, <code>Supplier</code>, <code>PurchasingOrganization</code>, <code>PurchasingGroup</code>  
+<strong>Trigger:</strong> Manager approval then batch transmission via <strong><code>sap-extractor</code></strong> (TRANSMIT_BATCH action)
+<strong>Outbound JSON Payload Structure:</strong>
+<pre><code class="language-json">{
+  "PurchaseOrder": "4500012345",
+  "CompanyCode": "1000",
+  "PurchaseOrderType": "NB",
+  "Supplier": "VEND-10042",
+  "PurchasingGroup": "001",
+  "PurchasingOrganization": "1000",
+  "to_PurchaseOrderItem": [
+    {
+      "PurchaseOrderItem": "10",
+      "Material": "MAT-FMCG-001",
+      "Plant": "1001",
+      "OrderQuantity": 240,
+      "PurchaseOrderQuantityUnit": "PC"
+    }
+  ]
+}
+</code></pre>
+<strong>Field-Level Mapping:</strong>
+<table><thead><tr><th>SmartStock Source Field</th><th>SmartStock Table</th><th>SAP OData Field Name</th><th>SAP ABAP Technical Name</th><th>SAP Table</th><th>Description</th></tr></thead><tbody><tr><td><code>sku</code></td><td><code>erp<em>staged</em>requisitions</code></td><td><code>Material</code></td><td><code>MATNR</code></td><td><code>EKPO</code></td><td>Material being ordered</td></tr><tr><td><code>plant</code></td><td><code>erp<em>staged</em>requisitions</code></td><td><code>Plant</code></td><td><code>WERKS</code></td><td><code>EKPO</code></td><td>Receiving plant</td></tr><tr><td><code>storage_location</code></td><td><code>erp<em>staged</em>requisitions</code></td><td><code>StorageLocation</code></td><td><code>LGORT</code></td><td><code>EKPO</code></td><td>Receiving storage location</td></tr><tr><td><code>quantity</code> <em>(MOQ-scaled)</em></td><td><code>erp<em>staged</em>requisitions</code></td><td><code>OrderQuantity</code></td><td><code>MENGE</code></td><td><code>EKPO</code></td><td>Order quantity (rounded to MOQ)</td></tr><tr><td><code>vendor_id</code></td><td><code>erp<em>purchase_info</em>records</code></td><td><code>Supplier</code></td><td><code>LIFNR</code></td><td><code>EKKO</code></td><td>Vendor account number</td></tr><tr><td><em>(hardcoded: "NB")</em></td><td>—</td><td><code>PurchaseOrderType</code></td><td><code>BSART</code></td><td><code>EKKO</code></td><td>Purchase order document type</td></tr><tr><td><em>(hardcoded: "1000")</em></td><td>—</td><td><code>CompanyCode</code></td><td><code>BUKRS</code></td><td><code>EKKO</code></td><td>Company code</td></tr><tr><td><em>(hardcoded: "1000")</em></td><td>—</td><td><code>PurchasingOrganization</code></td><td><code>EKORG</code></td><td><code>EKKO</code></td><td>Purchasing organisation</td></tr><tr><td><em>(hardcoded: "001")</em></td><td>—</td><td><code>PurchasingGroup</code></td><td><code>EKGRP</code></td><td><code>EKKO</code></td><td>Purchasing group</td></tr><tr><td><code>uom</code></td><td><code>live<em>inventory</em>ledger</code></td><td><code>PurchaseOrderQuantityUnit</code></td><td><code>MEINS</code></td><td><code>EKPO</code></td><td>Unit of measure</td></tr></tbody></table>
+<hr>
+<h3>2.3 — Stock Transfer Order (STO) Creation — Type UB</h3>
+<strong>Business Purpose:</strong> When a SKU is critically low at one store but overstocked at a nearby Distribution Centre or sister store, SmartStock generates an internal Stock Transfer Order to redistribute inventory without involving an external vendor.
+<strong>SAP OData Service:</strong> <code>API<em>PURCHASEORDER_PROCESS</em>SRV</code>  
+<strong>Entity Set:</strong> <code>A_PurchaseOrder</code>  
+<strong>HTTP Method:</strong> <code>POST</code>  
+<strong>Document Type (PO Type):</strong> <code>UB</code> (Stock Transfer Order)  
+<strong>Trigger:</strong> Emergency bypass via <strong><code>sap-batch-sync</code></strong> Edge Function (<code>execution_mode: IMMEDIATE</code>)
+<strong>Outbound JSON Payload Structure:</strong>
+<pre><code class="language-json">{
+  "PurchaseOrder": "4500099001",
+  "CompanyCode": "1000",
+  "PurchaseOrderType": "UB",
+  "Supplier": "INTERNAL-PLANT-HUB",
+  "PurchasingGroup": "001",
+  "PurchasingOrganization": "1000",
+  "to_PurchaseOrderItem": [
+    {
+      "PurchaseOrderItem": "10",
+      "Material": "MAT-FMCG-003",
+      "Plant": "1001",
+      "OrderQuantity": 48,
+      "PurchaseOrderQuantityUnit": "PC"
+    }
+  ]
+}
+</code></pre>
+<strong>Field-Level Mapping:</strong>
+<table><thead><tr><th>SmartStock Source</th><th>SAP OData Field Name</th><th>SAP ABAP Technical Name</th><th>Description</th></tr></thead><tbody><tr><td><code>sku</code> (request param)</td><td><code>Material</code></td><td><code>MATNR</code></td><td>Material to transfer</td></tr><tr><td><code>plant</code> (request param)</td><td><code>Plant</code></td><td><code>WERKS</code></td><td>Receiving plant</td></tr><tr><td><code>quantity</code> (request param)</td><td><code>OrderQuantity</code></td><td><code>MENGE</code></td><td>Transfer quantity</td></tr><tr><td><em>(hardcoded: "UB")</em></td><td><code>PurchaseOrderType</code></td><td><code>BSART</code></td><td>STO document type</td></tr><tr><td><em>(hardcoded: "INTERNAL-PLANT-HUB")</em></td><td><code>Supplier</code></td><td><code>LIFNR</code></td><td>Internal supplying plant reference</td></tr></tbody></table>
+<hr>
+<h2>PART 3 — POS Event Inbound Stream</h2>
+<strong>Business Purpose:</strong> The POS system posts a real-time event for every completed customer checkout. SmartStock ingests these to maintain a live, second-accurate stock deduction count intraday (between SAP overnight syncs).
+<div class="alert alert-note">📝 <strong>Note:</strong> This data comes from the <strong>POS system</strong> (not SAP). However, it must be aligned with SAP Material Numbers and Plant Codes so deductions correctly map to the SAP ledger.</div>
+<strong>Integration Mechanism:</strong> HTTP POST webhook → Supabase Edge Function  
+<strong>Target Table:</strong> <code>pos<em>sales</em>events</code> triggers update to <code>live<em>inventory</em>ledger</code>
+<strong>Expected POS Payload Schema:</strong>
+<pre><code class="language-json">{
+  "store_code": "1001",
+  "storage_location": "0001",
+  "items": [
+    { "sku": "MAT-00918", "quantity": 3 },
+    { "sku": "MAT-20349", "quantity": 1 }
+  ]
+}
+</code></pre>
+<strong>Field-Level Mapping:</strong>
+<table><thead><tr><th>POS Payload Field</th><th>SAP Equivalent</th><th>SAP ABAP Name</th><th>Description</th><th>SmartStock DB Impact</th></tr></thead><tbody><tr><td><code>store_code</code></td><td>Plant</td><td><code>WERKS</code></td><td>4-char SAP Plant code of the selling store</td><td>Maps to <code>live<em>inventory_ledger.sap_plant</em>code</code></td></tr><tr><td><code>storage_location</code></td><td>Storage Location</td><td><code>LGORT</code></td><td>Storage location within the store</td><td>Maps to <code>live<em>inventory_ledger.sap_storage</em>loc</code></td></tr><tr><td><code>items[].sku</code></td><td>Material Number</td><td><code>MATNR</code></td><td>SAP material number of the sold item</td><td>Maps to <code>live<em>inventory</em>ledger.sku</code></td></tr><tr><td><code>items[].quantity</code></td><td>Quantity</td><td><code>MENGE</code></td><td>Number of units sold in this transaction</td><td>Increments <code>live<em>inventory_ledger.pos_live</em>deductions</code></td></tr></tbody></table>
+<hr>
+<h2>PART 4 — Authentication & Connection Requirements</h2>
+<table><thead><tr><th>Parameter</th><th>Description</th><th>Source</th></tr></thead><tbody><tr><td><code>SAP<em>GATEWAY_BASE</em>URL</code></td><td>Base URL of the SAP API Gateway (e.g. <code>https://mycompany.api.com</code>)</td><td>SAP BASIS Team</td></tr><tr><td><code>SAP<em>BASIC_AUTH</em>TOKEN</code></td><td>Base64-encoded <code>username:password</code> for OData Basic Auth</td><td>SAP BASIS Team</td></tr><tr><td><code>SAP<em>CLIENT</em>ID</code></td><td>3-digit SAP client number (e.g. <code>100</code>)</td><td>SAP BASIS Team</td></tr></tbody></table>
+<strong>Authentication Method:</strong> HTTP Basic Authentication (<code>Authorization: Basic {token}</code>)  
+<strong>Protocol:</strong> HTTPS  
+<strong>Format:</strong> OData V2 JSON (<code>$format=json</code>)
+<hr>
+<h2>PART 5 — Summary of All SAP Objects Required</h2>
+<table><thead><tr><th>#</th><th>SAP OData Service</th><th>Entity Set</th><th>Direction</th><th>Usage</th></tr></thead><tbody><tr><td>1</td><td><code>API<em>INFORECORD_PROCESS</em>SRV</code></td><td><code>A_PurInfoRecPlantData</code></td><td>INBOUND (Read)</td><td>Pricing, MOQ, Lead Times</td></tr><tr><td>2</td><td><code>API<em>PURCHASEORDER_PROCESS</em>SRV</code></td><td><code>A_PurchaseOrderItem</code></td><td>INBOUND (Read)</td><td>Open In-Transit Stock</td></tr><tr><td>3</td><td><code>API<em>MATERIAL_STOCK</em>SRV</code></td><td><code>A_MatlStkInAcctMod</code></td><td>INBOUND (Read)</td><td>Overnight Inventory Baseline</td></tr><tr><td>4</td><td><code>API<em>PLANT</em>SRV</code></td><td>Plant Master</td><td>INBOUND (Read)</td><td>Plant/Store Organisation</td></tr><tr><td>5</td><td><code>API<em>RETAILPROMOTION</em>SRV</code></td><td>Promotion Master</td><td>INBOUND (Read)</td><td>Active Promotions & Uplift</td></tr><tr><td>6</td><td><code>API<em>MATERIAL_DOCUMENT</em>SRV</code></td><td><code>A_MaterialDocumentHeader</code></td><td>OUTBOUND (Write)</td><td>Floor Scrap Write-Back (Mvt 551)</td></tr><tr><td>7</td><td><code>API<em>PURCHASEORDER_PROCESS</em>SRV</code></td><td><code>A_PurchaseOrder</code></td><td>OUTBOUND (Write)</td><td>Purchase Order Creation (NB/UB)</td></tr></tbody></table>
+<hr>
+<h2>PART 6 — Key SAP ABAP Field Reference Index</h2>
+<table><thead><tr><th>ABAP Field Name</th><th>Description</th><th>Used In</th></tr></thead><tbody><tr><td><code>MATNR</code></td><td>Material Number (SKU)</td><td>All APIs</td></tr><tr><td><code>WERKS</code></td><td>Plant Code</td><td>All APIs</td></tr><tr><td><code>LGORT</code></td><td>Storage Location</td><td>Inventory, Scrap</td></tr><tr><td><code>MEINS</code></td><td>Base Unit of Measure</td><td>Inventory, Orders</td></tr><tr><td><code>LABST</code></td><td>Unrestricted Stock Quantity</td><td>Overnight Baseline</td></tr><tr><td><code>MAKTX</code></td><td>Material Description</td><td>Material Master</td></tr><tr><td><code>MATKL</code></td><td>Material Group</td><td>Info Records</td></tr><tr><td><code>LIFNR</code></td><td>Vendor Account Number</td><td>Info Records, PO</td></tr><tr><td><code>NAME1</code></td><td>Vendor Name</td><td>Info Records</td></tr><tr><td><code>NETPR</code></td><td>Net Price (Info Record)</td><td>Info Records</td></tr><tr><td><code>MINBM</code></td><td>Minimum Order Quantity</td><td>Info Records</td></tr><tr><td><code>PLIFZ</code></td><td>Planned Delivery Time (Days)</td><td>Info Records</td></tr><tr><td><code>BSTRF</code></td><td>Rounding Value</td><td>Info Records</td></tr><tr><td><code>BWART</code></td><td>Movement Type</td><td>Scrap Write-Back</td></tr><tr><td><code>ERFMG</code></td><td>Entry Quantity</td><td>Scrap Write-Back</td></tr><tr><td><code>ERFME</code></td><td>Entry Unit</td><td>Scrap Write-Back</td></tr><tr><td><code>GRUND</code></td><td>Reason for Movement</td><td>Scrap Write-Back</td></tr><tr><td><code>MBLNR</code></td><td>Material Document Number</td><td>Scrap Write-Back</td></tr><tr><td><code>MJAHR</code></td><td>Material Document Fiscal Year</td><td>Scrap Write-Back</td></tr><tr><td><code>EBELN</code></td><td>Purchase Order Number</td><td>Open POs</td></tr><tr><td><code>MENGE</code></td><td>Order Quantity</td><td>Purchase Orders, Open PO filter</td></tr><tr><td><code>WEMNG</code></td><td>Goods Receipt Quantity (Received)</td><td>Open PO filter (<code>ReceivedQuantity</code>)</td></tr><tr><td><code>LOEKZ</code></td><td>Deletion Indicator</td><td>Open PO filter (<code>MandatoryPrcmtDocIsDeleted</code>)</td></tr><tr><td><code>BSART</code></td><td>Document Type (NB / UB)</td><td>Purchase Orders</td></tr><tr><td><code>BUKRS</code></td><td>Company Code</td><td>Purchase Orders</td></tr><tr><td><code>EKORG</code></td><td>Purchasing Organisation</td><td>Purchase Orders</td></tr><tr><td><code>EKGRP</code></td><td>Purchasing Group</td><td>Purchase Orders</td></tr><tr><td><code>EINDT</code></td><td>Scheduled Delivery Date (<code>CorrespdgDeliveryDate</code>)</td><td>Open POs</td></tr><tr><td><code>AKTNR</code></td><td>Promotion Number</td><td>SAP Retail</td></tr><tr><td><code>DATAB</code></td><td>Validity Start Date</td><td>SAP Retail</td></tr><tr><td><code>DATBI</code></td><td>Validity End Date</td><td>SAP Retail</td></tr></tbody></table>
+<hr>
+<h2>APPENDIX A — S/4HANA Technical Data Requirements Runbook</h2>
+<h3>System Profile: SmartStock LiveRetail Replenishment Matrix V1.2</h3>
+<p>This appendix captures the official technical runbook as supplied by the SAP architect, consolidating all endpoint paths, filter conditions, field names, and sync schedules into a single reference.</p>
+<h4>A.1 — Inbound Master & Operational Framework</h4>
+<table><thead><tr><th>Category</th><th>Service Path</th><th>Filter / Select</th><th>Sync Frequency</th></tr></thead><tbody><tr><td><strong>Purchasing Constraints</strong></td><td><code>/sap/opu/odata/sap/API<em>INFORECORD_PROCESS</em>SRV/A_PurInfoRecPlantData</code></td><td><code>$select=Material,Supplier,NetPrice,MinimumOrderQuantity,PlannedDeliveryDurationInDays</code></td><td><strong>Weekly loop</strong></td></tr><tr><td><strong>Transit Pipelines</strong></td><td><code>/sap/opu/odata/sap/API<em>PURCHASEORDER_PROCESS</em>SRV/A_PurchaseOrderItem</code></td><td><code>$filter=OrderQuantity gt ReceivedQuantity and MandatoryPrcmtDocIsDeleted eq false</code> + track <code>CorrespdgDeliveryDate</code></td><td><strong>15-minute delta sweep</strong></td></tr><tr><td><strong>Core Ledger Baseline</strong></td><td><code>/sap/opu/odata/sap/API<em>MATERIAL_STOCK</em>SRV/A_MatlStkInAcctMod</code></td><td><code>$filter=Plant eq '{PLANT_CODE}'</code> — map <code>MatlStkQtyInAcctMod</code> to active stock baseline</td><td><strong>Nightly at 02:00</strong></td></tr></tbody></table>
+<h4>A.2 — Outbound Document Execution Tracks</h4>
+<table><thead><tr><th>Track</th><th>Service Path</th><th>Method</th><th>Key Compliance Fields</th></tr></thead><tbody><tr><td><strong>Scrap Document Write-Back (Mvt 551)</strong></td><td><code>/sap/opu/odata/sap/API<em>MATERIAL_DOCUMENT</em>SRV/A_MaterialDocumentHeader</code></td><td><code>POST $batch</code> (multi-part atomic — eliminates indirect licensing overhead)</td><td><code>GoodsMovementType</code>, <code>Plant</code>, <code>StorageLocation</code>, <code>Material</code>, <code>EntryQuantity</code>, <code>EntryUnit</code></td></tr><tr><td><strong>Purchase Order Generation (NB / UB)</strong></td><td><code>/sap/opu/odata/sap/API<em>PURCHASEORDER_PROCESS</em>SRV/A_PurchaseOrder</code></td><td><code>POST</code></td><td><code>CompanyCode</code>, <code>PurchaseOrderType</code>, <code>Supplier</code>, <code>PurchasingOrganization</code>, <code>PurchasingGroup</code></td></tr></tbody></table>
+<hr>
+<em>Document Version 1.2 — Updated per S/4HANA Technical Data Requirements Runbook. Source: SmartStock LiveRetail codebase — supabase/functions and supabase/migrations</em>
+
+  <div class="doc-footer">
+    <span>SmartStock LiveRetail — SAP S/4HANA Integration Documentation</span>
+    <span>Version 1.2 · Confidential</span>
+  </div>
+
+</body>
+</html>

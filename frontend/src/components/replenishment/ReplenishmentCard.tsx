@@ -39,7 +39,6 @@ export default function ReplenishmentCard({
   const horizon = forecast ? forecast.runout_horizon_days : (item.run_out_horizon_days !== null ? Math.max(0, Number(item.run_out_horizon_days)) : 0);
   
   const atp_stock = item.atp_stock !== undefined ? item.atp_stock : current_calculated_stock;
-  const reserved_qty = current_calculated_stock - atp_stock;
 
   // Senthil Anna's business rules & SAP Rounding Value (BSTRF):
   const baseDeficit = sap_baseline_qty - atp_stock;

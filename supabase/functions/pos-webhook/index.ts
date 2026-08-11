@@ -1,153 +1,127 @@
-// Supabase Edge Function: pos-webhook
-// Handles real-time transaction updates from in-store POS systems.
-// Security: HMAC SHA-256 signature validation via X-POS-Signature header.
+// Supabase Edge Function: pos-webhook (Production Multi-POS Ingestion Endpoint)
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { POSAdapterFactory } from '../_shared/pos-adapter/factory.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-pos-signature',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-pos-config-id, x-webhook-signature',
 }
-
-// -----------------------------------------------------------------------------
-// HMAC SHA-256 Helpers (Deno Web Crypto API)
-// -----------------------------------------------------------------------------
-
-/**
- * Imports the raw secret string as a CryptoKey for HMAC-SHA256 signing.
- */
-async function importHmacKey(secret: string): Promise<CryptoKey> {
-  const enc = new TextEncoder()
-  return crypto.subtle.importKey(
-    'raw',
-    enc.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,           // not extractable
-    ['sign', 'verify']
-  )
-}
-
-/**
- * Computes a lowercase hex HMAC-SHA256 digest of the given body string.
- */
-async function computeHmacHex(key: CryptoKey, body: string): Promise<string> {
-  const enc = new TextEncoder()
-  const signatureBuffer = await crypto.subtle.sign('HMAC', key, enc.encode(body))
-  return Array.from(new Uint8Array(signatureBuffer))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
-}
-
-/**
- * Constant-time string comparison — prevents timing-based side-channel attacks.
- * Falls back to a byte-by-byte XOR accumulator to ensure equal execution time.
- */
-function timingSafeEqual(a: string, b: string): boolean {
-  const enc = new TextEncoder()
-  const bufA = enc.encode(a)
-  const bufB = enc.encode(b)
-
-  // Lengths must match; we still run the full loop to avoid early-exit leakage.
-  if (bufA.length !== bufB.length) return false
-
-  let diff = 0
-  for (let i = 0; i < bufA.length; i++) {
-    diff |= bufA[i] ^ bufB[i]
-  }
-  return diff === 0
-}
-
-// -----------------------------------------------------------------------------
-// Request Handler
-// -----------------------------------------------------------------------------
 
 Deno.serve(async (req) => {
-  // Handle pre-flight CORS
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
-  // ------------------------------------------------------------------
-  // STEP 1 — Extract the incoming signature header
-  // ------------------------------------------------------------------
-  const incomingSignature = req.headers.get('x-pos-signature')
-
-  if (!incomingSignature) {
-    console.warn('[pos-webhook] Rejected: missing X-POS-Signature header.')
-    return new Response(
-      JSON.stringify({ error: 'Unauthorized: X-POS-Signature header is required.' }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
-    )
-  }
-
-  // ------------------------------------------------------------------
-  // STEP 2 — Read and clone the raw request body for signature check
-  // ------------------------------------------------------------------
-  // We clone so we can read body twice: once for verification, once for JSON parsing.
-  const bodyText = await req.text()
-
-  // ------------------------------------------------------------------
-  // STEP 3 — Compute the expected HMAC SHA-256 signature
-  // ------------------------------------------------------------------
-  const secret = Deno.env.get('POS_WEBHOOK_SECRET') ?? ''
-
-  if (!secret) {
-    console.error('[pos-webhook] Server misconfiguration: POS_WEBHOOK_SECRET env var is not set.')
-    return new Response(
-      JSON.stringify({ error: 'Internal server error: webhook secret not configured.' }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
-    )
-  }
-
-  const hmacKey = await importHmacKey(secret)
-  const expectedSignature = await computeHmacHex(hmacKey, bodyText)
-
-  // ------------------------------------------------------------------
-  // STEP 4 — Constant-time comparison
-  // ------------------------------------------------------------------
-  if (!timingSafeEqual(expectedSignature, incomingSignature.toLowerCase())) {
-    console.warn('[pos-webhook] Rejected: signature mismatch.', {
-      expected: expectedSignature,
-      received: incomingSignature,
-    })
-    return new Response(
-      JSON.stringify({ error: 'Forbidden: invalid X-POS-Signature.' }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403 }
-    )
-  }
-
-  console.log('[pos-webhook] Signature verified ✓')
-
-  // ------------------------------------------------------------------
-  // STEP 5 — Parse payload and write to the database queue
-  // ------------------------------------------------------------------
   try {
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
-    const payload = JSON.parse(bodyText)
+    const posConfigId = req.headers.get('x-pos-config-id')
+    const signature = req.headers.get('x-webhook-signature')
+    
+    let posConfig: any = null
+    if (posConfigId) {
+      const { data } = await supabase
+        .from('pos_configurations')
+        .select('*')
+        .eq('id', posConfigId)
+        .eq('is_active', true)
+        .maybeSingle()
+      posConfig = data
+    }
 
-    // Insert raw payload into pos_sales_events; the DB trigger handles ledger update
-    const { error } = await supabaseClient
-      .from('pos_sales_events')
-      .insert({ raw_payload: payload })
+    if (!posConfig) {
+      posConfig = {
+        id: 'default-pos-config',
+        tenant_id: 'default-tenant',
+        store_id: '1001',
+        pos_type: 'webhook_cloud',
+        config: {},
+        is_active: true
+      }
+    }
 
-    if (error) throw error
+    const payload = await req.json()
+    const adapter = POSAdapterFactory.createAdapter(posConfig)
+    const ingested = await adapter.ingest(payload)
+    const basket = Array.isArray(ingested) ? ingested[0] : ingested
+    
+    const validation = await adapter.validate(basket)
+    if (!validation.valid) {
+      await supabase.from('pos_rejected_transactions').insert({
+        tenant_id: basket.tenant_id,
+        transaction_id: basket.transaction_id,
+        rejection_reasons: validation.errors,
+        payload: basket.pos_raw_payload,
+      })
+      return new Response(JSON.stringify({ 
+        status: 'rejected', 
+        errors: validation.errors 
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 422 })
+    }
 
-    console.log('[pos-webhook] Event queued successfully:', payload?.store_code, payload?.items?.length, 'line item(s)')
+    const { count } = await supabase
+      .from('pos_transactions')
+      .select('*', { count: 'exact', head: true })
+      .eq('transaction_id', basket.transaction_id)
+      .eq('pos_config_id', posConfig.id)
+    
+    if ((count || 0) > 0) {
+      return new Response(JSON.stringify({ 
+        status: 'duplicate', 
+        transaction_id: basket.transaction_id 
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 })
+    }
 
-    return new Response(
-      JSON.stringify({ success: true, message: 'Inventory deduction queued' }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
-    )
-  } catch (err) {
-    console.error('[pos-webhook] Error inserting event:', err)
-    return new Response(
-      JSON.stringify({ error: (err as Error).message }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
-    )
+    const movements = await adapter.toMovements(basket)
+
+    await supabase.from('pos_transactions').insert({
+      tenant_id: basket.tenant_id,
+      store_id: basket.store_id,
+      pos_config_id: posConfig.id,
+      transaction_id: basket.transaction_id,
+      state: basket.state,
+      currency: basket.currency,
+      subtotal: basket.subtotal,
+      tax_total: basket.tax_total,
+      discount_total: basket.discount_total,
+      grand_total: basket.grand_total,
+      completed_at: basket.completed_at,
+      pos_raw_payload: basket.pos_raw_payload,
+    })
+
+    if (movements.length > 0) {
+      const { error: moveError } = await supabase.from('inventory_movements').insert(
+        movements.map(m => ({
+          tenant_id: m.tenant_id,
+          store_id: m.store_id,
+          sku: m.sku,
+          quantity: m.quantity,
+          movement_type: m.movement_type,
+          reference_id: m.transaction_id,
+          created_at: m.posted_at
+        }))
+      )
+
+      if (moveError) console.error('Ledger movement insertion error:', moveError)
+    }
+
+    return new Response(JSON.stringify({
+      status: 'processed',
+      transaction_id: basket.transaction_id,
+      movements_created: movements.length,
+      state: basket.state,
+    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 })
+
+  } catch (error) {
+    console.error('POS webhook error:', error)
+    return new Response(JSON.stringify({ 
+      status: 'error',
+      message: (error as Error).message 
+    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 })
   }
 })
