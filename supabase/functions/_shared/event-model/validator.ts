@@ -68,6 +68,64 @@ const ABSOLUTE_QTY_EVENTS: InventoryEventType[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// TIMESTAMP QUALITY CLASSIFICATION
+// ---------------------------------------------------------------------------
+
+export type TimestampQuality =
+  | 'NORMAL'
+  | 'SUSPICIOUS_FUTURE'
+  | 'SUSPICIOUS_PAST'
+  | 'EXTREME_FUTURE'
+  | 'EXTREME_PAST';
+
+export interface TimestampClassification {
+  quality: TimestampQuality;
+  offsetMs: number;
+  quarantine: boolean;
+  reason?: string;
+}
+
+export function classifyTimestamp(
+  businessTs: string,
+  receivedAt: Date = new Date()
+): TimestampClassification {
+  const bizTime = new Date(businessTs).getTime();
+  if (isNaN(bizTime)) {
+    return { quality: 'NORMAL', offsetMs: 0, quarantine: false, reason: 'Invalid date' };
+  }
+
+  const recvTime = receivedAt.getTime();
+  const offsetMs = bizTime - recvTime; // positive = future, negative = past
+  const fiveMin = 5 * 60 * 1000;
+  const twentyFourHours = 24 * 3600 * 1000;
+  const thirtyDays = 30 * 24 * 3600 * 1000;
+
+  if (Math.abs(offsetMs) <= fiveMin) {
+    return { quality: 'NORMAL', offsetMs, quarantine: false };
+  }
+  if (offsetMs > twentyFourHours) {
+    return {
+      quality: 'EXTREME_FUTURE',
+      offsetMs,
+      quarantine: true,
+      reason: `Business timestamp is ${Math.round(offsetMs / (3600 * 1000))} hours in future`,
+    };
+  }
+  if (offsetMs > fiveMin) {
+    return { quality: 'SUSPICIOUS_FUTURE', offsetMs, quarantine: false };
+  }
+  if (offsetMs < -thirtyDays) {
+    return {
+      quality: 'EXTREME_PAST',
+      offsetMs,
+      quarantine: true,
+      reason: `Business timestamp is > 30 days in past (${Math.round(-offsetMs / (86400 * 1000))} days)`,
+    };
+  }
+  return { quality: 'SUSPICIOUS_PAST', offsetMs, quarantine: false };
+}
+
+// ---------------------------------------------------------------------------
 // MAIN VALIDATOR
 // ---------------------------------------------------------------------------
 
@@ -134,61 +192,6 @@ export function validateCanonicalEvent(
       value: e['schema_version'],
     });
   }
-
-export type TimestampQuality =
-  | 'NORMAL'
-  | 'SUSPICIOUS_FUTURE'
-  | 'SUSPICIOUS_PAST'
-  | 'EXTREME_FUTURE'
-  | 'EXTREME_PAST';
-
-export interface TimestampClassification {
-  quality: TimestampQuality;
-  offsetMs: number;
-  quarantine: boolean;
-  reason?: string;
-}
-
-export function classifyTimestamp(
-  businessTs: string,
-  receivedAt: Date = new Date()
-): TimestampClassification {
-  const bizTime = new Date(businessTs).getTime();
-  if (isNaN(bizTime)) {
-    return { quality: 'NORMAL', offsetMs: 0, quarantine: false, reason: 'Invalid date' };
-  }
-
-  const recvTime = receivedAt.getTime();
-  const offsetMs = bizTime - recvTime; // positive = future, negative = past
-  const fiveMin = 5 * 60 * 1000;
-  const sevenDays = 7 * 24 * 3600 * 1000;
-  const twentyFourHours = 24 * 3600 * 1000;
-  const thirtyDays = 30 * 24 * 3600 * 1000;
-
-  if (Math.abs(offsetMs) <= fiveMin) {
-    return { quality: 'NORMAL', offsetMs, quarantine: false };
-  }
-  if (offsetMs > twentyFourHours) {
-    return {
-      quality: 'EXTREME_FUTURE',
-      offsetMs,
-      quarantine: true,
-      reason: `Business timestamp is ${Math.round(offsetMs / (3600 * 1000))} hours in future`,
-    };
-  }
-  if (offsetMs > fiveMin) {
-    return { quality: 'SUSPICIOUS_FUTURE', offsetMs, quarantine: false };
-  }
-  if (offsetMs < -thirtyDays) {
-    return {
-      quality: 'EXTREME_PAST',
-      offsetMs,
-      quarantine: true,
-      reason: `Business timestamp is > 30 days in past (${Math.round(-offsetMs / (86400 * 1000))} days)`,
-    };
-  }
-  return { quality: 'SUSPICIOUS_PAST', offsetMs, quarantine: false };
-}
 
   // ---- business_timestamp must be valid ISO 8601 ----
   if (typeof e['business_timestamp'] === 'string') {
