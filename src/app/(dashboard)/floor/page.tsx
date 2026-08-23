@@ -1,91 +1,116 @@
-// /src/app/(dashboard)/floor/page.tsx
-
 'use client';
 
+// /src/app/(dashboard)/floor/page.tsx
+// SmartStock Experience V1 — Floor Staff Task List
+
 import React from 'react';
-import { useRealtimeInventory } from '@/hooks/useRealtimeInventory';
-import { useStoreContext } from '@/hooks/useStoreContext';
-import { StockCard } from '@/components/inventory/StockCard';
-import { BottomNav } from '@/components/layout/BottomNav';
-import { SyncStatusBar } from '@/components/layout/SyncStatusBar';
-import { ScanBarcode, ClipboardCheck, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 import Link from 'next/link';
+import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import { ClipboardCheck, Tag, AlertTriangle, ArrowRight, CheckCircle2 } from 'lucide-react';
 
-export default function FloorHomePage() {
-  const { activeStoreId } = useStoreContext();
-  const { items, loading, lastUpdate } = useRealtimeInventory({
-    status: ['CRITICAL_RISK', 'REPLENISHMENT_NEEDED', 'EXPIRY_RISK'],
-  });
+interface FloorTask {
+  id: string;
+  type: 'RESTOCK' | 'VERIFY_COUNT' | 'FEFO_EXPIRY';
+  priority: 'URGENT' | 'HIGH' | 'NORMAL';
+  title: string;
+  location: string;
+  quantityHint: string;
+  sku: string;
+}
 
-  const criticalCount = items.filter((i) => i.stock_status === 'CRITICAL_RISK').length;
-  const expiryCount = items.filter((i) => i.stock_status === 'EXPIRY_RISK').length;
+export default function FloorTasksPage() {
+  const tasks: FloorTask[] = [
+    {
+      id: 'task-01',
+      type: 'VERIFY_COUNT',
+      priority: 'URGENT',
+      title: 'Count AirPods Pro (High-Value)',
+      location: 'Backroom Cabinet B4',
+      quantityHint: 'System expects ~8 units',
+      sku: 'AP-PRO-USB-C',
+    },
+    {
+      id: 'task-02',
+      type: 'RESTOCK',
+      priority: 'URGENT',
+      title: 'Restock Coca Cola Zero (24 Pack)',
+      location: 'Aisle 4 · Beverage Bay 2',
+      quantityHint: 'Transfer 12 units to front shelf',
+      sku: 'SKU-DRINK-001',
+    },
+    {
+      id: 'task-03',
+      type: 'FEFO_EXPIRY',
+      priority: 'HIGH',
+      title: 'Apply 25% Markdown Sticker',
+      location: 'Dairy Cooler C1 · Shelf 3',
+      quantityHint: '24 units of Greek Yogurt',
+      sku: 'MAT-33104',
+    },
+    {
+      id: 'task-04',
+      type: 'VERIFY_COUNT',
+      priority: 'NORMAL',
+      title: 'Routine Count: Olive Oil 1L',
+      location: 'Aisle 2 · Cooking Oils',
+      quantityHint: 'System expects ~18 units',
+      sku: 'MAT-00918',
+    },
+  ];
 
   return (
-    <div className="flex flex-col h-screen bg-slate-50">
-      <SyncStatusBar lastSync={lastUpdate} />
-      
-      {/* Header */}
-      <header className="px-4 pt-4 pb-2 bg-white border-b">
-        <h1 className="text-lg font-bold text-slate-900">Store Floor Operations</h1>
-        <p className="text-sm text-slate-500">Store {activeStoreId} • {items.length} items need attention</p>
-      </header>
-
-      {/* Quick Actions — Thumb Zone */}
-      <div className="grid grid-cols-3 gap-2 p-3 bg-white border-b">
-        <Link href="/floor/scan" className="w-full">
-          <div className="w-full h-20 flex flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-blue-300 hover:border-blue-500 bg-blue-50/50">
-            <ScanBarcode className="w-6 h-6 text-blue-600" />
-            <span className="text-xs font-medium text-slate-900">Scan</span>
-          </div>
-        </Link>
-        <Link href="/floor/count" className="w-full">
-          <div className="w-full h-20 flex flex-col items-center justify-center gap-1 rounded-xl border border-slate-200 hover:border-slate-300 bg-white">
-            <ClipboardCheck className="w-6 h-6 text-slate-600" />
-            <span className="text-xs font-medium text-slate-900">Count</span>
-          </div>
-        </Link>
-        <Link href="/floor/damage" className="w-full">
-          <div className="w-full h-20 flex flex-col items-center justify-center gap-1 rounded-xl border border-slate-200 hover:border-slate-300 bg-white">
-            <AlertTriangle className="w-6 h-6 text-amber-600" />
-            <span className="text-xs font-medium text-slate-900">Damage</span>
-          </div>
-        </Link>
-      </div>
-
-      {/* Alert Summary Chips */}
-      {(criticalCount > 0 || expiryCount > 0) && (
-        <div className="flex gap-2 px-3 py-2 overflow-x-auto bg-slate-100/50">
-          {criticalCount > 0 && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-red-100 text-red-800 rounded-full text-xs font-semibold whitespace-nowrap">
-              <AlertTriangle className="w-4 h-4" />
-              {criticalCount} Critical
-            </div>
-          )}
-          {expiryCount > 0 && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-100 text-purple-800 rounded-full text-xs font-semibold whitespace-nowrap">
-              <Clock className="w-4 h-4" />
-              {expiryCount} Expiring
-            </div>
-          )}
+    <div className="space-y-4">
+      {/* Floor User Header */}
+      <div className="flex items-center justify-between pb-2 border-b border-[#E4E7EC]">
+        <div>
+          <h1 className="text-lg font-bold text-[#101828]">Good morning, Mia</h1>
+          <p className="text-xs text-[#667085]">
+            <strong className="text-[#101828] font-semibold">{tasks.length} tasks</strong> assigned to you today
+          </p>
         </div>
-      )}
-
-      {/* Scrollable Stock List */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-3 pb-24">
-        {loading ? (
-          <div className="text-center py-8 text-slate-400 text-sm">Loading store inventory...</div>
-        ) : items.length === 0 ? (
-          <div className="text-center py-12 text-slate-400">
-            <CheckCircle className="w-12 h-12 mx-auto mb-3 text-green-500" />
-            <p className="font-medium text-slate-900">All stock healthy</p>
-            <p className="text-sm text-slate-500">Nothing needs attention right now.</p>
-          </div>
-        ) : (
-          items.map((item) => <StockCard key={item.sku} item={item} />)
-        )}
+        <span className="text-[11px] font-mono font-semibold px-2 py-0.5 rounded bg-[#E8F4F3] text-[#14706B] border border-[#14706B]/20">
+          Store 1001
+        </span>
       </div>
 
-      <BottomNav role="floor_staff" />
+      {/* Task List (Large touch targets, no tables) */}
+      <div className="space-y-3">
+        {tasks.map((task) => (
+          <div
+            key={task.id}
+            className="op-card p-4 bg-white border border-[#E4E7EC] rounded-[8px] space-y-3 shadow-2xs"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-1.5">
+                  <Badge status={task.priority === 'URGENT' ? 'critical' : 'warning'} size="sm">
+                    {task.priority}
+                  </Badge>
+                  <span className="font-mono text-[11px] text-[#667085]">{task.sku}</span>
+                </div>
+                <h3 className="text-sm font-semibold text-[#101828]">{task.title}</h3>
+              </div>
+            </div>
+
+            <div className="text-xs text-[#475467] bg-[#F9FAFB] p-2.5 rounded-[6px] border border-[#EAECF0] space-y-0.5">
+              <p>📍 Location: <strong className="text-[#101828]">{task.location}</strong></p>
+              <p className="text-[#667085]">{task.quantityHint}</p>
+            </div>
+
+            <Link href={`/floor/count/${task.id}`} className="block">
+              <Button
+                variant="primary"
+                size="md"
+                className="w-full h-11 text-xs font-semibold"
+                rightIcon={<ArrowRight className="w-4 h-4" />}
+              >
+                Start Task
+              </Button>
+            </Link>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

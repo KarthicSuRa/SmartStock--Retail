@@ -20,7 +20,7 @@ export function AlertCard({ item, showActions }: Props) {
     await supabase.from('reorder_alerts').update({
       status: 'acknowledged',
       acknowledged_at: new Date().toISOString(),
-    }).eq('id', item.id);
+    }).eq('sku', item.sku).eq('store_id', activeStoreId);
     setAcknowledged(true);
   };
 

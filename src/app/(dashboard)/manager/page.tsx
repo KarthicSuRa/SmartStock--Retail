@@ -50,7 +50,7 @@ export default function ManagerDashboardPage() {
               <DollarSign className="w-4 h-4 text-green-500" />
             </div>
             <div className="text-3xl font-bold text-slate-900 mt-2">
-              €{totalProtected.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              €{totalProtected.toLocaleString('en-US', { maximumFractionDigits: 0 })}
             </div>
             <p className="text-xs text-slate-500 mt-1">Stockout prevention value</p>
           </div>

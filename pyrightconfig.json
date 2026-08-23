@@ -1,0 +1,15 @@
+{
+  "venv": ".venv",
+  "executionEnvironments": [
+    {
+      "root": "ml-services",
+      "extraPaths": [
+        "ml-services",
+        "ml-services/decision-service",
+        "ml-services/forecast-service",
+        "ml-services/anomaly-service",
+        "ml-services/backtesting"
+      ]
+    }
+  ]
+}

@@ -3,7 +3,6 @@
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
-import { Button } from '@/components/ui/button';
 import { Mic, MicOff, CheckCircle, AlertCircle } from 'lucide-react';
 
 interface Props {
@@ -151,12 +150,12 @@ export function VoiceCountInput({ knownSkus, onCount }: Props) {
             <p className="text-2xl font-bold text-slate-900 mt-1">{parsed.qty} units</p>
           </div>
           <div className="flex gap-2">
-            <Button onClick={confirmCount} className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold">
+            <button onClick={confirmCount} className="flex-1 py-2 px-4 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg text-sm">
               Confirm Count
-            </Button>
-            <Button variant="outline" onClick={() => { setParsed(null); setTranscript(''); }}>
+            </button>
+            <button onClick={() => { setParsed(null); setTranscript(''); }} className="py-2 px-4 border border-slate-300 text-slate-700 hover:bg-slate-50 font-bold rounded-lg text-sm">
               Retry
-            </Button>
+            </button>
           </div>
         </div>
       )}

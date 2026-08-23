@@ -4,7 +4,7 @@ export const statusColors = {
   HEALTHY: { bg: '#dcfce7', text: '#166534', border: '#22c55e', icon: 'CheckCircle' },
   REPLENISHMENT_NEEDED: { bg: '#fef3c7', text: '#92400e', border: '#f59e0b', icon: 'AlertTriangle' },
   CRITICAL_RISK: { bg: '#fee2e2', text: '#991b1b', border: '#ef4444', icon: 'AlertOctagon' },
-  STOCKOUT_IMMIMENT: { bg: '#fee2e2', text: '#7f1d1d', border: '#dc2626', icon: 'Flame' },
+  STOCKOUT_IMMINENT: { bg: '#fee2e2', text: '#7f1d1d', border: '#dc2626', icon: 'Flame' },
   EXPIRY_RISK: { bg: '#f3e8ff', text: '#6b21a8', border: '#a855f7', icon: 'Clock' },
   PENDING_SYNC: { bg: '#e0f2fe', text: '#075985', border: '#0ea5e9', icon: 'CloudOff' },
   SYNCED: { bg: '#dcfce7', text: '#166534', border: '#22c55e', icon: 'CloudCheck' },

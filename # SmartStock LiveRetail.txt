@@ -1,0 +1,32 @@
+# SmartStock LiveRetail
+
+
+# SmartStock PRO
+SAP S/4HANA OData Engine
+[Intelligent Radar2 Critical](http://localhost:3000/dashboard)
+[Inventory Ledger](http://localhost:3000/ledger)
+[Smart Cycle Counts5 Due](http://localhost:3000/counts)
+[FEFO Expiry Actions3 Urgent](http://localhost:3000/fefo)
+[Vision Shelf Health](http://localhost:3000/shelf-health)
+[Procurement Hub2 Staged](http://localhost:3000/procurement)
+[Floor Staff PWA](http://localhost:3000/floor)
+[Manager Overview](http://localhost:3000/manager)
+[Executive Analytics](http://localhost:3000/manager/analytics)
+Store Manager
+Tenant: default-tenant
+Stockout Risk Imminent
+
+### 0 SKUs
+Immediate replenishment required
+Protected Revenue Yield
+
+### €38,200
++14.2% vs previous month
+OData API Batch Efficiency
+
+### 99.8%
+Idempotent batching active
+Scan-to-Fulfill Velocity
+
+### +18.4%
+Avg lead time: 1.2 days

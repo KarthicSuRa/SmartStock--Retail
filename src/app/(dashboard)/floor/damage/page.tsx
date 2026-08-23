@@ -5,7 +5,7 @@
 import React, { useState } from 'react';
 import { useOfflineQueue } from '@/hooks/useOfflineQueue';
 import { useStoreContext } from '@/hooks/useStoreContext';
-import { Camera, Plus, Trash2, CloudOff, CloudCheck } from 'lucide-react';
+import { Camera, Plus, Trash2, CloudOff, CheckCircle2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 const DAMAGE_REASONS = [
@@ -81,7 +81,7 @@ export default function DamageLogPage() {
             </span>
           ) : (
             <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-green-100 text-green-800 rounded-full text-xs font-semibold">
-              <CloudCheck className="w-3 h-3 text-green-600" />
+              <CheckCircle2 className="w-3 h-3 text-green-600" />
               Synced
             </span>
           )}

@@ -5,6 +5,14 @@
   "deno.enablePaths": [
     "supabase/functions"
   ],
-  "deno.importMap": "supabase/functions/import_map.json"
+  "deno.importMap": "supabase/functions/import_map.json",
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/ml-services",
+    "${workspaceFolder}/ml-services/decision-service",
+    "${workspaceFolder}/ml-services/forecast-service",
+    "${workspaceFolder}/ml-services/anomaly-service",
+    "${workspaceFolder}/ml-services/backtesting"
+  ]
 }
 

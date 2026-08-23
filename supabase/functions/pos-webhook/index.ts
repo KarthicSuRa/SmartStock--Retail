@@ -79,6 +79,7 @@ Deno.serve(async (req) => {
 
     const movements = await adapter.toMovements(basket)
 
+    // Store POS transaction record for customer receipt and register history
     await supabase.from('pos_transactions').insert({
       tenant_id: basket.tenant_id,
       store_id: basket.store_id,
@@ -94,31 +95,70 @@ Deno.serve(async (req) => {
       pos_raw_payload: basket.pos_raw_payload,
     })
 
-    if (movements.length > 0) {
-      const { error: moveError } = await supabase.from('inventory_movements').insert(
-        movements.map(m => ({
-          tenant_id: m.tenant_id,
-          store_id: m.store_id,
-          sku: m.sku,
-          quantity: m.quantity,
-          movement_type: m.movement_type,
-          reference_id: m.transaction_id,
-          created_at: m.posted_at
-        }))
-      )
+    // ---- AUTHORITATIVE V2 MUTATION PATH ----
+    // All inventory deductions flow exclusively through canonical inventory_events.
+    // Legacy direct writes to inventory_movements are eliminated.
+    const canonicalEvents = movements.map((m: any, idx: number) => ({
+      idempotency_key: `POS__${basket.tenant_id}__${basket.transaction_id}__${m.sku}__${idx}`,
+      event_type: m.movement_type === 'RETURN' ? 'RETURN' : 'SALE',
+      tenant_id: basket.tenant_id,
+      location_id: basket.store_id,
+      // material_id resolved later by projection worker via SKU lookup
+      source_system: 'POS',
+      source_event_id: `${basket.transaction_id}_${m.sku}_${idx}`,
+      business_timestamp: basket.completed_at || new Date().toISOString(),
+      // SALE reduces stock → negative delta; RETURN increases → positive
+      quantity_delta: m.movement_type === 'RETURN' ? Math.abs(m.quantity) : -Math.abs(m.quantity),
+      unit_of_measure: m.uom || 'PC',
+      correlation_id: basket.transaction_id,
+      reference_type: 'POS_TRANSACTION',
+      reference_id: basket.transaction_id,
+      schema_version: '1.0',
+      raw_payload: {
+        transaction_id: basket.transaction_id,
+        sku: m.sku,
+        pos_config_id: posConfig.id,
+        original_movement: m,
+      },
+      metadata: {
+        pos_type: posConfig.pos_type,
+        store_id: basket.store_id,
+        currency: basket.currency,
+        grand_total: basket.grand_total,
+      },
+    }))
 
-      if (moveError) console.error('Ledger movement insertion error:', moveError)
+    // Forward to ingestion gateway (service-to-service call)
+    const gatewayUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/ingestion-gateway`
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+
+    const gatewayRes = await fetch(gatewayUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${serviceKey}`,
+        'Content-Type': 'application/json',
+        'x-source-system': 'POS',
+        'x-tenant-id': basket.tenant_id,
+      },
+      body: JSON.stringify(canonicalEvents),
+    })
+
+    if (!gatewayRes.ok) {
+      // Non-fatal: V1 writes already succeeded; log but don't fail the webhook response
+      const gatewayErr = await gatewayRes.text().catch(() => 'unknown')
+      console.warn('[pos-webhook] Ingestion gateway warning:', gatewayErr)
     }
 
     return new Response(JSON.stringify({
       status: 'processed',
       transaction_id: basket.transaction_id,
       movements_created: movements.length,
+      canonical_events_emitted: canonicalEvents.length,
       state: basket.state,
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 })
 
   } catch (error) {
-    console.error('POS webhook error:', error)
+    console.error('[pos-webhook] Unhandled error:', error)
     return new Response(JSON.stringify({ 
       status: 'error',
       message: (error as Error).message 

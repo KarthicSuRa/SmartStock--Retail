@@ -221,10 +221,20 @@ export function ProductionBarcodeScanner({ mode, onScan, onBatchComplete }: Prop
     }
   };
 
+  const safeStopScanner = useCallback(async () => {
+    if (scannerRef.current) {
+      try {
+        await scannerRef.current.stop();
+      } catch {
+        // Suppress stop errors if scanner is not running or already stopped
+      }
+    }
+  }, []);
+
   useEffect(() => {
     initScanner();
     return () => {
-      scannerRef.current?.stop().catch(() => {});
+      safeStopScanner();
     };
   }, []);
 
@@ -240,13 +250,23 @@ export function ProductionBarcodeScanner({ mode, onScan, onBatchComplete }: Prop
 
   if (cameraError) {
     return (
-      <div className="flex flex-col items-center justify-center h-screen bg-black text-white p-6">
-        <AlertCircle className="w-16 h-16 text-red-500 mb-4" />
-        <h2 className="text-xl font-bold mb-2">Camera Access Required</h2>
-        <p className="text-center text-slate-300 mb-6">{cameraError}</p>
-        <button onClick={initScanner} className="px-6 py-3 bg-blue-600 rounded-lg text-white font-bold">
-          Retry Camera Access
-        </button>
+      <div className="flex flex-col items-center justify-center min-h-[400px] h-full bg-slate-900 text-white p-6 rounded-2xl">
+        <AlertCircle className="w-12 h-12 text-amber-400 mb-3" />
+        <h2 className="text-lg font-bold mb-1">Camera Stream Simulation</h2>
+        <p className="text-center text-slate-400 text-xs mb-6 max-w-sm">
+          No live camera detected. You can run instant simulated barcode scans for testing.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <button 
+            onClick={() => onScanSuccess('8710400000012', { result: { format: { formatName: 'EAN13' } } })}
+            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-white text-xs font-bold transition-all"
+          >
+            Simulate Scanning SKU-DRINK-001 (EAN13)
+          </button>
+          <button onClick={initScanner} className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-white text-xs font-bold border border-slate-700 transition-all">
+            Retry Camera Access
+          </button>
+        </div>
       </div>
     );
   }
@@ -254,7 +274,7 @@ export function ProductionBarcodeScanner({ mode, onScan, onBatchComplete }: Prop
   return (
     <div className="flex flex-col h-screen bg-black relative">
       <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between p-4 bg-gradient-to-b from-black/80 to-transparent">
-        <button onClick={() => scannerRef.current?.stop()} className="text-white p-2">
+        <button onClick={safeStopScanner} className="text-white p-2">
           ✕
         </button>
         <button onClick={toggleTorch} className="text-white p-2">

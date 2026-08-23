@@ -159,9 +159,29 @@ export interface POItem {
   delivery_date: string;
 }
 
+export interface ERPCapabilities {
+  inventoryRead: boolean;
+  materialDocumentCreate: boolean;
+  stockTransferCreate: boolean;
+  purchaseOrderCreate: boolean;
+  batchSupported: boolean;
+  apiVersions: Record<string, string>;
+}
+
+export interface PostingStatusResult {
+  reference: string;
+  found: boolean;
+  erp_document_number?: string;
+  status: 'CONFIRMED' | 'NOT_FOUND' | 'FAILED';
+  error_message?: string;
+}
+
 // ==================== ADAPTER INTERFACE ====================
 
 export interface IERPAdapter {
+  // Capability Discovery
+  capabilities(): Promise<ERPCapabilities>;
+
   // Connection & Health
   connect(): Promise<{ success: boolean; message: string }>;
   healthCheck(): Promise<{ status: 'healthy' | 'degraded' | 'down'; latency_ms: number }>;
@@ -176,6 +196,9 @@ export interface IERPAdapter {
   postPurchaseRequisition(pr: PurchaseRequisition): Promise<{ success: boolean; erp_pr_number?: string; errors?: string[] }>;
   postPurchaseOrder(po: PurchaseOrder): Promise<{ success: boolean; erp_po_number?: string; errors?: string[] }>;
   
+  // Status check for OUTCOME_UNKNOWN resolution
+  getPostingStatus(reference: string): Promise<PostingStatusResult>;
+
   // Procurement (Inbound from ERP)
   fetchPurchaseOrders(filters?: POFilter): Promise<PurchaseOrder[]>;
   fetchGoodsReceipts(since?: string): Promise<GoodsReceipt[]>;

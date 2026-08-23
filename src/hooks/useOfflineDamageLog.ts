@@ -1,6 +1,6 @@
-// /src/hooks/useOfflineDamageLog.ts
 
 import { useState, useCallback } from 'react';
+import { supabase } from '@/lib/supabase';
 
 export interface DamageLogPayload {
   sku: string;
@@ -19,16 +19,14 @@ export function useOfflineDamageLog() {
     const localId = await saveToLocalQueue(payload);
     
     try {
-      const response = await fetch('/supabase/functions/pwa-offline-sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const { error: invokeError } = await supabase.functions.invoke('pwa-offline-sync', {
+        body: {
           action_type: 'damage_log',
           items: [payload]
-        })
+        }
       });
 
-      if (response.ok) {
+      if (!invokeError) {
         await removeFromLocalQueue(localId);
         return { success: true, synced: true };
       }
@@ -66,16 +64,14 @@ export function useOfflineDamageLog() {
       
       const queue = await getLocalQueue();
       if (queue.length > 0) {
-        const response = await fetch('/supabase/functions/pwa-offline-sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        const { error: invokeError } = await supabase.functions.invoke('pwa-offline-sync', {
+          body: {
             action_type: 'damage_log',
             items: queue.map(i => i.payload)
-          })
+          }
         });
         
-        if (response.ok) {
+        if (!invokeError) {
           for (const item of queue) {
             await removeFromLocalQueue(item.id);
           }

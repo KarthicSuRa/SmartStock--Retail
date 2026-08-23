@@ -1,0 +1,135 @@
+/* src/app/globals.css — SmartStock Experience V1 Enterprise Design System */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Brand */
+  --color-brand: #14706B;
+  --color-brand-hover: #0E5652;
+  --color-brand-subtle: #E8F4F3;
+
+  /* Neutrals & Surfaces */
+  --color-bg-app: #F7F8FA;
+  --color-bg-surface: #FFFFFF;
+  --color-bg-surface-subtle: #F9FAFB;
+  --color-border: #E4E7EC;
+  --color-border-subtle: #EEF0F4;
+  --color-border-strong: #D0D5DD;
+
+  /* Text */
+  --color-text-primary: #101828;
+  --color-text-secondary: #475467;
+  --color-text-tertiary: #98A2B3;
+  --color-text-on-brand: #FFFFFF;
+
+  /* Semantic Status Tokens */
+  --color-critical: #D92D20;
+  --color-critical-subtle: #FEF3F2;
+  --color-critical-border: #FECDCA;
+
+  --color-warning: #DC6803;
+  --color-warning-subtle: #FEF6EE;
+  --color-warning-border: #FEDF89;
+
+  --color-healthy: #039855;
+  --color-healthy-subtle: #EDFDF5;
+  --color-healthy-border: #A6F4C5;
+
+  --color-info: #1570EF;
+  --color-info-subtle: #EFF8FF;
+  --color-info-border: #B2DDFF;
+
+  --color-neutral: #667085;
+  --color-neutral-subtle: #F2F4F7;
+  --color-neutral-border: #EAECF0;
+
+  /* Density */
+  --row-height: 48px;
+  --table-padding-y: 12px;
+}
+
+[data-density="compact"] {
+  --row-height: 36px;
+  --table-padding-y: 8px;
+}
+
+[data-density="comfortable"] {
+  --row-height: 52px;
+  --table-padding-y: 14px;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  scroll-behavior: smooth;
+  background-color: var(--color-bg-app);
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: var(--color-bg-app);
+  color: var(--color-text-primary);
+  margin: 0;
+  padding: 0;
+  overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Operational Surface Utility */
+.op-card {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
+.op-card-interactive {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  transition: border-color 140ms ease-out, box-shadow 140ms ease-out;
+}
+
+.op-card-interactive:hover {
+  border-color: var(--color-border-strong);
+  box-shadow: 0 2px 4px rgba(16, 24, 40, 0.06);
+}
+
+/* Focus Rings */
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+/* Clean Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #F2F4F7;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #D0D5DD;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #98A2B3;
+}

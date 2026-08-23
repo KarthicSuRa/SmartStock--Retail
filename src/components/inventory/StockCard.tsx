@@ -2,10 +2,10 @@
 
 import React, { useState } from 'react';
 import { statusColors } from '@/theme/tokens';
-import { ChevronRight, TrendingDown, TrendingUp, CheckCircle, AlertTriangle, AlertOctagon, Flame, Clock, CloudOff, CloudCheck } from 'lucide-react';
+import { ChevronRight, TrendingDown, TrendingUp, CheckCircle, AlertTriangle, AlertOctagon, Flame, Clock, CloudOff, CheckCircle2 } from 'lucide-react';
 
 const icons: Record<string, React.ComponentType<{ className?: string }>> = {
-  CheckCircle, AlertTriangle, AlertOctagon, Flame, Clock, CloudOff, CloudCheck
+  CheckCircle, AlertTriangle, AlertOctagon, Flame, Clock, CloudOff, CloudCheck: CheckCircle2
 };
 
 interface Props {

@@ -1,10 +1,6 @@
-// /src/components/scanner/ShelfHealthScanner.tsx
-
 'use client';
 
 import { useRef, useState, useEffect } from 'react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Camera, AlertTriangle, CheckCircle, RefreshCw } from 'lucide-react';
 
 interface BoundingBox {
@@ -33,17 +29,23 @@ export function ShelfHealthScanner() {
 
   const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' }
-      });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' }
+        });
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play();
+        }
+        setScanning(true);
+        setCameraError(null);
+      } else {
+        setCameraError('Camera stream unavailable (Demo simulation active)');
+        setScanning(true);
       }
+    } catch {
+      setCameraError('Camera stream unavailable (Demo simulation active)');
       setScanning(true);
-      setCameraError(null);
-    } catch (err) {
-      setCameraError(err instanceof Error ? err.message : 'Camera init failed');
     }
   };
 
@@ -101,9 +103,9 @@ export function ShelfHealthScanner() {
       <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between p-4 bg-gradient-to-b from-black/80 to-transparent text-white">
         <h2 className="font-bold text-base">Shelf Health Vision Scanner</h2>
         {shelfScore !== null && (
-          <Badge className={shelfScore > 80 ? 'bg-green-600' : 'bg-red-600'}>
+          <span className={`px-2.5 py-1 rounded-full text-xs font-bold text-white ${shelfScore > 80 ? 'bg-green-600' : 'bg-red-600'}`}>
             Health: {shelfScore}%
-          </Badge>
+          </span>
         )}
       </div>
 
@@ -122,19 +124,19 @@ export function ShelfHealthScanner() {
                   {detectedBoxes.filter(d => d.label.includes('GAP')).length} Shelf Out-of-Stock Gaps Detected
                 </p>
               </div>
-              <Button size="sm" variant="outline" onClick={captureAndAnalyze}>
+              <button onClick={captureAndAnalyze} className="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 flex items-center hover:bg-slate-100">
                 <RefreshCw className="w-4 h-4 mr-1" /> Re-scan
-              </Button>
+              </button>
             </div>
-            <Button className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3">
+            <button className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-xl text-sm transition-colors">
               Trigger Emergency Replenishment Ticket
-            </Button>
+            </button>
           </div>
         ) : (
-          <Button onClick={captureAndAnalyze} className="w-full h-14 bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg flex items-center justify-center gap-2">
+          <button onClick={captureAndAnalyze} className="w-full h-14 bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg flex items-center justify-center gap-2 rounded-xl transition-colors">
             <Camera className="w-6 h-6" />
             Analyze Shelf Stock Health
-          </Button>
+          </button>
         )}
       </div>
     </div>
