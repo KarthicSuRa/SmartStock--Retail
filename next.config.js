@@ -16,9 +16,7 @@ const nextConfig = {
   },
 
   // Resolve @/ path alias to src/
-  // (next.config.js enforces this for non-TS tooling too)
   experimental: {
-    // Enable server actions for future form handling
     serverActions: {
       allowedOrigins: ['localhost:3000'],
     },
@@ -26,17 +24,6 @@ const nextConfig = {
 
   // Disable x-powered-by header for security
   poweredByHeader: false,
-
-  // Redirect root to /login so the app has a proper entry point
-  async redirects() {
-    return [
-      {
-        source: '/',
-        destination: '/login',
-        permanent: false,
-      },
-    ];
-  },
 };
 
 module.exports = nextConfig;
