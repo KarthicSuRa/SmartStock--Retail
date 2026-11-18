@@ -1,5 +1,12 @@
 // Supabase Edge Function: sap-batch-sync (ERP Batch Sync Engine)
 // Refactored to use the ERP Adapter Abstraction Layer
+//
+// Integrity rules enforced here:
+//   1. A SAP document number is only ever the number SAP returned. There is no
+//      synthesised fallback anywhere in this file.
+//   2. Local reconciliation is only invoked with SAP-confirmed document numbers.
+//   3. Simulated (mock) adapters never write a document number into the ledger.
+//   4. STOs are refused rather than silently downgraded to a purchase order.
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
@@ -65,9 +72,21 @@ Deno.serve(async (req) => {
     const adminClient = createClient(supabaseUrl, supabaseServiceKey)
     const adapter = await AdapterFactory.getAdapterForTenant(tenantId, adminClient)
 
-    // CHECK FOR IMMEDIATE BYPASS MODE (EMERGENCY PO / STO)
+    // ==================== IMMEDIATE BYPASS (EMERGENCY PO) ====================
     if (executionMode === 'IMMEDIATE') {
       const { sku, quantity, plant } = requestData
+
+      if (requestData.document_type === 'STO') {
+        // A stock transport order is not a purchase order. Posting a normal PO
+        // would create a document that looks like an STO but moves no stock.
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: 'Stock transport orders are not supported by this adapter. Use API_STOCKTRANSPORTORDER (S/4HANA Cloud Public Edition 2602+) or the customer-specific STO process.',
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 422 }
+        )
+      }
 
       if (!sku || !quantity || !plant) {
         return new Response(
@@ -76,36 +95,66 @@ Deno.serve(async (req) => {
         )
       }
 
+      // A supplier and a price are commercial facts. Inventing either one would
+      // write a real purchase commitment against a made-up vendor or value.
+      if (!requestData.vendor_code) {
+        return new Response(
+          JSON.stringify({ error: 'Bad Request: vendor_code is required to create a purchase order.' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+        )
+      }
+      if (requestData.net_price == null || Number.isNaN(Number(requestData.net_price))) {
+        return new Response(
+          JSON.stringify({ error: 'Bad Request: net_price is required to create a purchase order.' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+        )
+      }
+
       console.log(`[erp-batch-sync] High-priority IMMEDIATE bypass for SKU: ${sku}, Qty: ${quantity}, Plant: ${plant}`)
 
-      const isSto = requestData.document_type === 'STO'
-      const vendorCode = isSto ? 'INTERNAL-PLANT-HUB' : (requestData.vendor_code || 'VEND-10042')
+      const netPrice = Number(requestData.net_price)
+      const qty = Number(quantity)
 
       const poPayload: PurchaseOrder = {
         po_id: crypto.randomUUID(),
         erp_po_number: '',
-        vendor_code: vendorCode,
-        vendor_name: isSto ? 'Internal Hub Logistics' : 'Primary Vendor',
+        po_type: 'NB',
+        vendor_code: requestData.vendor_code,
+        vendor_name: requestData.vendor_name || '',
         items: [
           {
-            item_id: '10',
+            item_id: '00010',
             sku,
-            quantity_ordered: Number(quantity),
+            quantity_ordered: qty,
             quantity_delivered: 0,
             quantity_invoiced: 0,
-            uom: 'PC',
-            net_price: requestData.net_price || 5.0,
-            delivery_date: new Date(Date.now() + 86400000).toISOString().split('T')[0]
+            uom: requestData.uom || 'PC',
+            net_price: netPrice,
+            delivery_date: requestData.delivery_date || new Date(Date.now() + 86400000).toISOString().split('T')[0],
+            plant,
           }
         ],
-        total_value: Number(quantity) * (requestData.net_price || 5.0),
-        currency: 'EUR',
+        total_value: qty * netPrice,
+        currency: requestData.currency || 'EUR',
         status: 'OPEN',
         created_at: new Date().toISOString()
       }
 
       const poResult = await adapter.postPurchaseOrder(poPayload)
-      const sapPoId = poResult.erp_po_number || `${isSto ? 'SAP-STO-' : 'SAP-PO-'}${4500000000 + Math.floor(Math.random() * 9999999)}`
+
+      if (!poResult.success || !poResult.erp_po_number) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: poResult.errors?.join('; ') || 'ERP did not return a purchase order number.',
+            simulated: adapter.simulated
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 502 }
+        )
+      }
+
+      // Real number, returned by the ERP. Never synthesised.
+      const sapPoReference = poResult.erp_po_number
 
       let storageLocation = '0001'
       const { data: ledgerRow } = await adminClient
@@ -124,11 +173,12 @@ Deno.serve(async (req) => {
         .from('pending_replenishments')
         .insert({
           sku,
-          quantity: Number(quantity),
+          quantity: qty,
           plant,
           storage_location: storageLocation,
           status: 'PROCESSED',
-          sap_po_reference: sapPoId
+          // A simulated run must never leave a number that looks like SAP's.
+          sap_po_reference: adapter.simulated ? null : sapPoReference
         })
 
       if (dbError) {
@@ -138,16 +188,18 @@ Deno.serve(async (req) => {
       return new Response(
         JSON.stringify({
           success: true,
-          message: 'Immediate purchase order bypass processed and confirmed via ERP adapter.',
-          sap_po_reference: sapPoId,
-          erp_adapter_success: poResult.success,
-          api_payload: poPayload
+          simulated: adapter.simulated,
+          message: adapter.simulated
+            ? 'Simulated purchase order created in the mock adapter. No SAP document exists.'
+            : 'Purchase order created in SAP.',
+          sap_po_reference: adapter.simulated ? null : sapPoReference,
+          local_record_written: !dbError
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
       )
     }
 
-    // STANDARD BATCH OPERATIONS (FLOOR SCRAP SYNC & PENDING MOVEMENTS)
+    // ==================== STANDARD BATCH (FLOOR SCRAP SYNC) ====================
     const { data: scraps, error: scrapsError } = await adminClient
       .from('buffered_scraps')
       .select('*')
@@ -159,15 +211,15 @@ Deno.serve(async (req) => {
       return new Response(
         JSON.stringify({
           success: true,
+          simulated: adapter.simulated,
           message: 'No pending scrap records to sync.',
-          sap_document_id: null,
-          consolidated_payload: []
+          sap_document_ids: [],
+          batch_summary: { total: 0, succeeded: 0, failed: 0 }
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
       )
     }
 
-    // Convert scraps to standard InventoryMovement objects
     const movements: InventoryMovement[] = scraps.map((scrap: any) => ({
       movement_id: scrap.id,
       sku: scrap.sku,
@@ -179,27 +231,75 @@ Deno.serve(async (req) => {
       posted_by: scrap.reported_by || 'STORE_STAFF',
       erp_status: 'PENDING_SYNC',
       retry_count: 0,
-      created_at: scrap.created_at || new Date().toISOString()
+      created_at: scrap.created_at || new Date().toISOString(),
+      // Values the floor already captured; never re-derived here.
+      storage_location: scrap.sap_storage_loc || undefined,
+      sap_reason_code: scrap.scrap_reason_code || undefined,
     }))
 
-    // Execute batch transmission via adapter
     const batchResult = await adapter.postInventoryMovements(movements)
 
-    // Execute local database reconciliation function
-    const { data: reconciliationResult } = await adminClient.rpc('reconcile_sap_batch_sync')
+    // Only SAP-confirmed postings may be reconciled, and a simulated adapter
+    // confirms nothing in SAP.
+    const confirmed: Array<{ id: string; material_document: string; material_document_year?: string }> = []
+    if (!adapter.simulated) {
+      for (const row of batchResult.items) {
+        if (row.status === 'success' && row.erp_document_number) {
+          const movement = row.item as InventoryMovement
+          confirmed.push({
+            id: movement.movement_id,
+            material_document: row.erp_document_number,
+            material_document_year: row.erp_document_year,
+          })
+        }
+      }
+    }
+
+    let reconciliation: { synced?: number; skipped?: number } = { synced: 0, skipped: 0 }
+    if (confirmed.length > 0) {
+      const { data, error: rpcError } = await adminClient.rpc('reconcile_sap_batch_sync', {
+        p_synced: confirmed,
+      })
+      if (rpcError) {
+        // The documents exist in SAP but the local ledger was not updated.
+        // Surface it as an error rather than reporting success.
+        console.error('[erp-batch-sync] Reconciliation RPC failed:', rpcError)
+        return new Response(
+          JSON.stringify({
+            success: false,
+            simulated: adapter.simulated,
+            error: `SAP accepted ${confirmed.length} document(s) but local reconciliation failed: ${rpcError.message}`,
+            sap_document_ids: confirmed.map((c) => c.material_document),
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
+        )
+      }
+      reconciliation = data ?? reconciliation
+    }
+
+    const failed = batchResult.failed
+    const responseStatus = batchResult.succeeded === 0 && failed > 0 ? 502 : 200
 
     return new Response(
       JSON.stringify({
-        success: true,
-        message: reconciliationResult?.message || `ERP batch sync completed: ${batchResult.succeeded}/${batchResult.total} movements synced.`,
-        sap_document_id: reconciliationResult?.sap_document_id || `DOC-${Date.now()}`,
+        success: batchResult.succeeded > 0,
+        simulated: adapter.simulated,
+        message: adapter.simulated
+          ? `Simulated run: ${batchResult.succeeded}/${batchResult.total} movement(s) accepted by the mock adapter. Nothing was posted to SAP.`
+          : `${batchResult.succeeded}/${batchResult.total} movement(s) posted to SAP.`,
+        sap_document_ids: confirmed.map((c) => c.material_document),
         batch_summary: {
           total: batchResult.total,
           succeeded: batchResult.succeeded,
-          failed: batchResult.failed
-        }
+          failed
+        },
+        reconciliation,
+        errors: batchResult.items
+          .filter((i) => i.status !== 'success')
+          .map((i) => i.error)
+          .filter(Boolean)
       }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: responseStatus }
     )
 
   } catch (err) {

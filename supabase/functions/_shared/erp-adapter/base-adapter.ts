@@ -1,8 +1,11 @@
 // /supabase/functions/_shared/erp-adapter/base-adapter.ts
 
-import { IERPAdapter, ERPConfig, BatchResult, InventoryMovement, MaterialMaster, StockBaseline, VendorInfo, PurchaseRequisition, PurchaseOrder, GoodsReceipt, ReconciliationResult, POFilter } from './types.ts';
+import { IERPAdapter, ERPConfig, BatchResult, InventoryMovement, MaterialMaster, StockBaseline, VendorInfo, PurchaseRequisition, PurchaseOrder, GoodsReceipt, ReconciliationResult, POFilter, ERPCapabilities, PostingStatusResult } from './types.ts';
+import { isNonRetryable, NonRetryableError } from './errors.ts';
 
 export abstract class BaseERPAdapter implements IERPAdapter {
+  readonly simulated: boolean = false;
+
   protected config: ERPConfig;
   protected requestTimeoutMs: number = 30000;
   protected maxRetries: number = 3;
@@ -64,8 +67,16 @@ export abstract class BaseERPAdapter implements IERPAdapter {
         
       } catch (error) {
         lastError = error as Error;
+
+        // Configuration errors, unsupported movements and "we don't know if it
+        // committed" errors must never be retried: a retry cannot fix them and,
+        // for OutcomeUnknown, would create a duplicate metered document.
+        if (isNonRetryable(error)) {
+          throw error;
+        }
+
         this.recordFailure();
-        
+
         if (attempt === this.maxRetries) {
           console.error(`[${this.config.erp_type}] ${context} failed after ${this.maxRetries} attempts:`, lastError);
           throw lastError;
@@ -93,7 +104,7 @@ export abstract class BaseERPAdapter implements IERPAdapter {
   // ==================== BATCH ERROR HANDLING ====================
   // Every adapter must implement proper partial failure handling
   
-  protected createBatchResult<T>(items: T[], results: Array<{ success: boolean; error?: string; erp_doc?: string }>): BatchResult<T> {
+  protected createBatchResult<T>(items: T[], results: Array<{ success: boolean; error?: string; erp_doc?: string; erp_doc_year?: string }>): BatchResult<T> {
     return {
       total: items.length,
       succeeded: results.filter(r => r.success).length,
@@ -102,14 +113,41 @@ export abstract class BaseERPAdapter implements IERPAdapter {
         item,
         status: results[idx]?.success ? 'success' : (results[idx]?.error?.includes('partial') ? 'partial' : 'failed'),
         erp_document_number: results[idx]?.erp_doc,
+        erp_document_year: results[idx]?.erp_doc_year,
         error: results[idx]?.error
       }))
     };
   }
 
+  /**
+   * Default capability report. Adapters override what they actually support so
+   * callers can fail fast instead of discovering gaps at post time.
+   */
+  async capabilities(): Promise<ERPCapabilities> {
+    return {
+      inventoryRead: true,
+      materialDocumentCreate: true,
+      stockTransferCreate: false,
+      purchaseOrderCreate: true,
+      batchSupported: true,
+      apiVersions: {},
+    };
+  }
+
+  /**
+   * Resolves an OUTCOME_UNKNOWN posting by external reference.
+   *
+   * Unimplemented by default on purpose: a fake positive would let the worker
+   * close out a job whose document never reached the ERP.
+   */
+  async getPostingStatus(reference: string): Promise<PostingStatusResult> {
+    throw new NonRetryableError(
+      `getPostingStatus() is not implemented for ${this.config.erp_type}; reference '${reference}' cannot be resolved automatically.`,
+    );
+  }
+
   // Abstract methods — MUST be implemented by each ERP adapter
-  abstract connect(): Promise<{ success: boolean; message: string }>;
-  abstract healthCheck(): Promise<{ status: 'healthy' | 'degraded' | 'down'; latency_ms: number }>;
+  abstract connect(): Promise<{ success: boolean; message: string }>;  abstract healthCheck(): Promise<{ status: 'healthy' | 'degraded' | 'down'; latency_ms: number }>;
   abstract fetchMaterialMaster(since?: string): Promise<MaterialMaster[]>;
   abstract fetchStockBaselines(store_id: string): Promise<StockBaseline[]>;
   abstract fetchVendors(): Promise<VendorInfo[]>;

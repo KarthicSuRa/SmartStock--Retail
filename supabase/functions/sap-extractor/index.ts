@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { requireAuth, authFailureResponse } from "../_shared/security/require-auth.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -11,6 +12,11 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
+
+  // Scheduled sync endpoint: still requires a caller identity so it cannot be
+  // triggered by anyone who happens to know the URL.
+  const auth = await requireAuth(req, { allowService: true })
+  if (!auth.ok) return authFailureResponse(auth, corsHeaders)
 
   try {
     // Parse JSON body for POST requests
@@ -25,20 +31,16 @@ Deno.serve(async (req) => {
 
     // Handle batch transmission routing
     if (body?.action === 'TRANSMIT_BATCH') {
-      const payload = Array.isArray(body.payload) ? body.payload : [];
-      console.log(`[sap-extractor] Received batch transmission request for ${payload.length} vendor batches.`);
-      payload.forEach((batch: any) => {
-        console.log(`[sap-extractor] Vendor Group: ${batch.vendor_id} (${batch.vendor_name}) | Total Items: ${batch.total_requisitions} | Total Qty: ${batch.total_quantity}`);
-        console.log(`[sap-extractor] Items Payload:`, JSON.stringify(batch.items));
-      });
-
+      // This path previously logged the payload and returned a random UUID as
+      // "sap_batch_id", which let callers believe requisitions had reached SAP.
+      // Nothing is transmitted here, so the endpoint now says exactly that.
       return new Response(
         JSON.stringify({
-          success: true,
-          message: `Consolidated OData batch sync complete. Successfully transmitted ${payload.length} vendor groups to SAP Gateway.`,
-          sap_batch_id: crypto.randomUUID()
+          success: false,
+          not_implemented: true,
+          error: 'TRANSMIT_BATCH is not implemented. Purchase requisitions are created through erp-batch-execute (API_PURCHASEREQ_PROCESS_SRV); no documents were transmitted by this call.',
         }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 501 }
       );
     }
 
@@ -67,13 +69,30 @@ Deno.serve(async (req) => {
     let infoRecordsResults = []
     let openOrdersResults = []
 
+    /** Supplier number -> display name, resolved from API_BUSINESS_PARTNER. */
+    const supplierNameById = new Map<string, string>()
+
     // If SAP credentials exist, fetch from SAP S/4HANA OData V2 APIs
     if (sapBaseUrl && sapBasicAuthToken) {
       const authHeader = `Basic ${sapBasicAuthToken}`
       const clientSuffix = sapClientId ? `&sap-client=${sapClientId}` : ''
 
-      // API 1: Fetch Purchasing Info Records (Pricing, MOQ, Lead Times)
-      const infoRecUrl = `${sapBaseUrl}/sap/opu/odata/sap/API_INFORECORD_PROCESS_SRV/A_PurInfoRecPlantData?$format=json&$select=Material,MaterialGroup,Vendor,NetPrice,MinimumOrderQuantity,PlannedDeliveryDuration${clientSuffix}`
+      // API 1: Purchasing Info Records (pricing, MOQ, planned delivery time).
+      //
+      // Service and entity verified against SAP's released API catalogue:
+      //   API_INFORECORD_PROCESS_SRV / A_PurchasingInfoRecord
+      //   navigation to_PurgInfoRecdOrgPlantData  (A_PurgInfoRecdOrgPlantData)
+      //
+      // Header carries Supplier + Material; the per-plant commercial terms live
+      // on the plant-data navigation as NetPriceAmount,
+      // MinimumPurchaseOrderQuantity and MaterialPlannedDeliveryDurn.
+      //
+      // The previous entity name "A_PurInfoRecPlantData" does not exist in this
+      // service, and "NetPrice"/"MinimumOrderQuantity"/"PlannedDeliveryDuration"
+      // are not its field names.
+      const infoRecUrl =
+        `${sapBaseUrl}/sap/opu/odata/sap/API_INFORECORD_PROCESS_SRV/A_PurchasingInfoRecord` +
+        `?$format=json&$expand=to_PurgInfoRecdOrgPlantData${clientSuffix}`
       console.log(`[sap-extractor] Fetching SAP Info Records from: ${infoRecUrl}`)
 
       // A headers object designed to safely inject authentication token
@@ -91,6 +110,27 @@ Deno.serve(async (req) => {
       infoRecordsResults = infoRecJson?.d?.results || []
       console.log(`[sap-extractor] Successfully harvested ${infoRecordsResults.length} SAP Info Records.`)
 
+      // Supplier display names live on API_BUSINESS_PARTNER/A_Supplier, not on
+      // the info record. Fetched separately; failure is non-fatal because the
+      // supplier number is still a truthful identifier.
+      try {
+        const supplierUrl =
+          `${sapBaseUrl}/sap/opu/odata/sap/API_BUSINESS_PARTNER/A_Supplier` +
+          `?$format=json&$select=Supplier,SupplierName${clientSuffix}`
+        const supplierRes = await fetch(supplierUrl, { method: 'GET', headers })
+        if (supplierRes.ok) {
+          const supplierJson = await supplierRes.json()
+          for (const s of supplierJson?.d?.results ?? []) {
+            if (s?.Supplier) supplierNameById.set(String(s.Supplier), String(s.SupplierName ?? ''))
+          }
+          console.log(`[sap-extractor] Resolved ${supplierNameById.size} supplier name(s) from API_BUSINESS_PARTNER.`)
+        } else {
+          console.warn(`[sap-extractor] Supplier name lookup returned HTTP ${supplierRes.status}; supplier numbers will be used as-is.`)
+        }
+      } catch (err) {
+        console.warn('[sap-extractor] Supplier name lookup failed; supplier numbers will be used as-is:', err)
+      }
+
       // API 2: Fetch Open Delivery Orders (Transit Logs)
       const openOrdersUrl = `${sapBaseUrl}/sap/opu/odata/sap/API_PURCHASEORDER_PROCESS_SRV/A_PurchaseOrderItem?$format=json&$filter=OpenInboundDeliveryQty gt 0${clientSuffix}`
       console.log(`[sap-extractor] Fetching SAP Open Purchase Orders from: ${openOrdersUrl}`)
@@ -104,86 +144,96 @@ Deno.serve(async (req) => {
       console.log(`[sap-extractor] Successfully harvested ${openOrdersResults.length} SAP Open Purchase Orders.`)
 
     } else {
-      // MOCK FALLBACK MODE FOR LOCAL DEV / SIMULATION
-      console.warn('[sap-extractor] Environment credentials missing. Running in simulated MOCK Mode.')
-      
-      infoRecordsResults = [
-        {
-          Material: 'MAT-FMCG-001',
-          MaterialGroup: 'FMCG',
-          Vendor: 'V-1001',
-          VendorName: 'Rotterdam Dairy Co.',
-          NetPrice: '1.25',
-          MinimumOrderQuantity: 50,
-          PlannedDeliveryDuration: 2
-        },
-        {
-          Material: 'MAT-FMCG-002',
-          MaterialGroup: 'FMCG',
-          Vendor: 'V-1002',
-          VendorName: 'Coca-Cola European Partners',
-          NetPrice: '0.90',
-          MinimumOrderQuantity: 100,
-          PlannedDeliveryDuration: 3
-        },
-        {
-          Material: 'MAT-FMCG-003',
-          MaterialGroup: 'FMCG',
-          Vendor: 'V-1001',
-          VendorName: 'Rotterdam Dairy Co.',
-          NetPrice: '2.50',
-          MinimumOrderQuantity: 24,
-          PlannedDeliveryDuration: 2
-        },
-        {
-          Material: 'MAT-FMCG-004',
-          MaterialGroup: 'FMCG',
-          Vendor: 'V-1003',
-          VendorName: 'Unilever NL',
-          NetPrice: '3.60',
-          MinimumOrderQuantity: 48,
-          PlannedDeliveryDuration: 3
-        }
-      ]
-
-      openOrdersResults = [
-        {
-          Material: 'MAT-FMCG-001',
-          OpenInboundDeliveryQty: 120,
-          DeliveryDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString()
-        },
-        {
-          Material: 'MAT-FMCG-003',
-          OpenInboundDeliveryQty: 48,
-          DeliveryDate: new Date(Date.now() + 4 * 24 * 60 * 60 * 1000).toISOString()
-        }
-      ]
+      // Credentials missing. Previously this branch loaded hard-coded vendor
+      // and material data into the staging tables, which made invented master
+      // data indistinguishable from SAP data downstream. It now refuses to run.
+      console.warn('[sap-extractor] SAP credentials missing. Refusing to write simulated master data.')
+      return new Response(
+        JSON.stringify({
+          success: false,
+          configured: false,
+          error: 'SAP_GATEWAY_BASE_URL and SAP_BASIC_AUTH_TOKEN are not configured. No master data was read and no staging rows were written.',
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 503 }
+      )
     }
 
     // 2. Relational Data Mapping & Database Upserts
-    const infoRecordsToUpsert = infoRecordsResults.map((item: any) => {
-      // Map standard SAP OData structure keys to local DB schema fields
-      return {
-        sku: item.Material,
-        matkl_group: item.MaterialGroup || 'N/A',
-        vendor_id: item.Vendor || 'N/A',
-        vendor_name: item.VendorName || item.SupplierName || `SAP Supplier (${item.Vendor || 'N/A'})`,
-        netpr_price: Number(item.NetPrice || 0),
-        minbm_moq: Number(item.MinimumOrderQuantity || 0),
-        vendor_lead_days: Number(item.PlannedDeliveryDuration || 0),
-        updated_at: new Date().toISOString()
+    //
+    // Every column below is NOT NULL in the staging schema. A row that SAP did
+    // not fully populate is dropped and reported rather than back-filled with
+    // 'N/A', a vendor name invented from the vendor number, or a price of 0 —
+    // all of which would silently become procurement reality downstream.
+    const rejectedInfoRecords: string[] = []
+
+    const infoRecordsToUpsert = infoRecordsResults.flatMap((item: any) => {
+      // Plant-level terms are nested under to_PurgInfoRecdOrgPlantData.
+      const plantData = item.to_PurgInfoRecdOrgPlantData?.results?.[0]
+        ?? (Array.isArray(item.to_PurgInfoRecdOrgPlantData) ? item.to_PurgInfoRecdOrgPlantData[0] : undefined)
+
+      const supplierNumber = item.Supplier ?? item.Vendor
+      const supplierName = supplierNameById.get(String(supplierNumber ?? ''))
+
+      const missing = [
+        !item.Material && 'Material',
+        !item.MaterialGroup && 'MaterialGroup',
+        !supplierNumber && 'Supplier',
+        !plantData && 'to_PurgInfoRecdOrgPlantData',
+        plantData && plantData.NetPriceAmount == null && 'NetPriceAmount',
+        plantData && plantData.MinimumPurchaseOrderQuantity == null && 'MinimumPurchaseOrderQuantity',
+        plantData && plantData.MaterialPlannedDeliveryDurn == null && 'MaterialPlannedDeliveryDurn',
+      ].filter(Boolean)
+
+      if (missing.length > 0) {
+        rejectedInfoRecords.push(`${item.Material ?? '(no material)'}: missing ${missing.join(', ')}`)
+        return []
       }
+
+      return [{
+        sku: item.Material,
+        matkl_group: item.MaterialGroup,
+        vendor_id: String(supplierNumber),
+        // A supplier number is an identifier, not a name. Use the resolved name
+        // when API_BUSINESS_PARTNER supplied one, otherwise keep the number.
+        vendor_name: supplierName || String(supplierNumber),
+        netpr_price: Number(plantData.NetPriceAmount),
+        minbm_moq: Number(plantData.MinimumPurchaseOrderQuantity),
+        vendor_lead_days: Number(plantData.MaterialPlannedDeliveryDurn),
+        updated_at: new Date().toISOString()
+      }]
     })
 
-    const openOrdersToInsert = openOrdersResults.map((item: any) => {
-      return {
-        sku: item.Material,
-        open_inbound_qty: Number(item.OpenInboundDeliveryQty || item.OpenQuantity || 0),
-        estimated_delivery_date: item.DeliveryDate 
-          ? new Date(item.DeliveryDate).toISOString().split('T')[0] 
-          : new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+    const rejectedOpenOrders: string[] = []
+
+    const openOrdersToInsert = openOrdersResults.flatMap((item: any) => {
+      const quantity = item.OpenInboundDeliveryQty ?? item.OpenQuantity
+
+      // No delivery date and no quantity means there is nothing truthful to
+      // stage, and the column is NOT NULL.
+      if (!item.Material || quantity == null || !item.DeliveryDate) {
+        rejectedOpenOrders.push(
+          `${item.Material ?? '(no material)'}: missing ${[
+            !item.Material && 'Material',
+            quantity == null && 'open quantity',
+            !item.DeliveryDate && 'DeliveryDate',
+          ].filter(Boolean).join(', ')}`
+        )
+        return []
       }
+
+      return [{
+        sku: item.Material,
+        open_inbound_qty: Number(quantity),
+        estimated_delivery_date: new Date(item.DeliveryDate).toISOString().split('T')[0]
+      }]
     })
+
+    if (rejectedInfoRecords.length > 0) {
+      console.warn(`[sap-extractor] Skipped ${rejectedInfoRecords.length} incomplete info record(s):`, rejectedInfoRecords)
+    }
+    if (rejectedOpenOrders.length > 0) {
+      console.warn(`[sap-extractor] Skipped ${rejectedOpenOrders.length} incomplete open inbound order(s):`, rejectedOpenOrders)
+    }
 
     // Commit high-performance database updates
     let pirCount = 0
@@ -202,19 +252,24 @@ Deno.serve(async (req) => {
       pirCount = infoRecordsToUpsert.length
     }
 
-    // Overwrite transit orders table entirely to represent current active transit logs
-    console.log('[sap-extractor] Clearing outdated erp_open_inbound_orders entries...')
-    const { error: clearError } = await adminClient
-      .from('erp_open_inbound_orders')
-      .delete()
-      .neq('id', '00000000-0000-0000-0000-000000000000')
+    // Replace the transit snapshot only when SAP actually returned rows.
+    // An empty response is far more likely to be a filter/permission problem
+    // than a genuinely empty pipeline, and wiping the table on it destroys the
+    // last known-good state.
+    if (openOrdersToInsert.length === 0) {
+      console.warn('[sap-extractor] SAP returned zero open inbound orders. Leaving existing staging rows untouched.')
+    } else {
+      console.log('[sap-extractor] Clearing outdated erp_open_inbound_orders entries...')
+      const { error: clearError } = await adminClient
+        .from('erp_open_inbound_orders')
+        .delete()
+        .neq('id', '00000000-0000-0000-0000-000000000000')
 
-    if (clearError) {
-      console.error('[sap-extractor] Error clearing erp_open_inbound_orders:', clearError)
-      throw clearError
-    }
+      if (clearError) {
+        console.error('[sap-extractor] Error clearing erp_open_inbound_orders:', clearError)
+        throw clearError
+      }
 
-    if (openOrdersToInsert.length > 0) {
       console.log(`[sap-extractor] Committing insert for ${openOrdersToInsert.length} ERP Open Inbound Orders...`)
       const { error: oioError } = await adminClient
         .from('erp_open_inbound_orders')
@@ -235,7 +290,9 @@ Deno.serve(async (req) => {
         message: 'SAP S4/HANA master data extraction and staging database synchronisation completed successfully.',
         sync_summary: {
           purchase_info_records_upserted: pirCount,
-          open_inbound_orders_staged: oioCount
+          open_inbound_orders_staged: oioCount,
+          info_records_skipped_incomplete: rejectedInfoRecords.length,
+          open_inbound_orders_skipped_incomplete: rejectedOpenOrders.length
         }
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }

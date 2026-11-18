@@ -7,6 +7,8 @@ import {
 } from './types.ts';
 
 export class MockAdapter extends BaseERPAdapter {
+  override readonly simulated: boolean = true;
+
   private mockDelay = 200; // ms
 
   async connect(): Promise<{ success: boolean; message: string }> {

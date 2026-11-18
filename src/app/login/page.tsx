@@ -419,7 +419,7 @@ export default function LoginPage() {
       </div>
 
       <div className="text-center text-xs text-slate-600 py-2">
-        Secured by Supabase Auth · SAP S/4HANA OData Certified Architecture
+        Secured by Supabase Auth · Built on released SAP S/4HANA OData APIs
       </div>
     </div>
   );

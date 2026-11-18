@@ -26,7 +26,7 @@ export default function AdminHubPage() {
   const adminModules = [
     {
       title: 'POS Control Tower',
-      description: 'Real-time telemetry and feed health for Shopify, Square, Clover, and Lightspeed.',
+      description: 'Real-time telemetry and feed health for Shopify, Square, and Lightspeed X-Series.',
       href: '/admin/pos-control-tower',
       icon: Shield,
       badge: 'Live Feeds',
@@ -37,7 +37,7 @@ export default function AdminHubPage() {
       description: 'Configure and provision point-of-sale connectors, authentication keys, and webhooks.',
       href: '/admin/pos-connections',
       icon: Layers,
-      badge: '4 Active',
+      badge: 'Configure',
       badgeStatus: 'neutral' as const,
     },
     {
@@ -45,8 +45,8 @@ export default function AdminHubPage() {
       description: 'Automated ledger discrepancy matching between physical store POS and SAP S/4HANA.',
       href: '/admin/reconciliation',
       icon: RefreshCw,
-      badge: '99.8% Match',
-      badgeStatus: 'healthy' as const,
+      badge: 'Open',
+      badgeStatus: 'neutral' as const,
     },
     {
       title: 'Quarantine & Dead-Letter Isolation',

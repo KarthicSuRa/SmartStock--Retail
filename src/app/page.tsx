@@ -101,9 +101,9 @@ export default function LandingPage() {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
             </span>
-            <span className="font-mono text-emerald-400 font-semibold">Sub-Second Synchronicity</span>
+            <span className="font-mono text-emerald-400 font-semibold">Event-Driven Sync</span>
             <span className="text-slate-500">·</span>
-            <span>SAP S/4HANA OData Certified Architecture</span>
+            <span>Built on released SAP S/4HANA OData APIs</span>
           </div>
 
           {/* Main Headline */}
@@ -139,42 +139,42 @@ export default function LandingPage() {
             </Link>
           </div>
 
-          {/* Live System Metrics Strip */}
+          {/* Architecture Facts Strip */}
           <div className="pt-10 max-w-5xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-4 text-left">
             <div className="p-5 rounded-2xl bg-slate-900/70 border border-slate-800 backdrop-blur-sm">
               <div className="flex items-center justify-between text-slate-400 text-xs font-mono mb-1">
-                <span>BATCH EFFICIENCY</span>
+                <span>BATCH TRANSPORT</span>
                 <Zap className="w-3.5 h-3.5 text-emerald-400" />
               </div>
-              <div className="text-2xl sm:text-3xl font-black text-white font-mono">99.8%</div>
-              <div className="text-xs text-slate-400 mt-1">Idempotent OData sync</div>
+              <div className="text-2xl sm:text-3xl font-black text-white font-mono">$batch</div>
+              <div className="text-xs text-slate-400 mt-1">One change set per document</div>
             </div>
 
             <div className="p-5 rounded-2xl bg-slate-900/70 border border-slate-800 backdrop-blur-sm">
               <div className="flex items-center justify-between text-slate-400 text-xs font-mono mb-1">
-                <span>PROTECTED REVENUE</span>
+                <span>LICENSING BASIS</span>
                 <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
               </div>
-              <div className="text-2xl sm:text-3xl font-black text-emerald-400 font-mono">€38,200</div>
-              <div className="text-xs text-slate-400 mt-1">+14.2% vs previous mo</div>
+              <div className="text-2xl sm:text-3xl font-black text-emerald-400 font-mono">Per line item</div>
+              <div className="text-xs text-slate-400 mt-1">Digital Access, measured in SAP RSUVM_DAC</div>
             </div>
 
             <div className="p-5 rounded-2xl bg-slate-900/70 border border-slate-800 backdrop-blur-sm">
               <div className="flex items-center justify-between text-slate-400 text-xs font-mono mb-1">
-                <span>EVENT LATENCY</span>
+                <span>POST SAFETY</span>
                 <Clock className="w-3.5 h-3.5 text-teal-400" />
               </div>
-              <div className="text-2xl sm:text-3xl font-black text-white font-mono">1.2s</div>
-              <div className="text-xs text-slate-400 mt-1">Scan-to-fulfill velocity</div>
+              <div className="text-2xl sm:text-3xl font-black text-white font-mono">Fail closed</div>
+              <div className="text-xs text-slate-400 mt-1">Unconfirmed posts are never retried</div>
             </div>
 
             <div className="p-5 rounded-2xl bg-slate-900/70 border border-slate-800 backdrop-blur-sm">
               <div className="flex items-center justify-between text-slate-400 text-xs font-mono mb-1">
-                <span>PROJECTIONS</span>
+                <span>MOVEMENT TYPES</span>
                 <Layers className="w-3.5 h-3.5 text-cyan-400" />
               </div>
-              <div className="text-2xl sm:text-3xl font-black text-cyan-400 font-mono">72 Active</div>
-              <div className="text-xs text-slate-400 mt-1">Immutable ledger rules</div>
+              <div className="text-2xl sm:text-3xl font-black text-cyan-400 font-mono">551 · 501 · 301</div>
+              <div className="text-xs text-slate-400 mt-1">Released APIs only</div>
             </div>
           </div>
         </div>
@@ -239,7 +239,7 @@ export default function LandingPage() {
               </div>
               <div className="flex items-center gap-2 font-mono text-emerald-400">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span>Connected: Store 1001 (Amsterdam Central)</span>
+                <span>Illustrative preview — sample data</span>
               </div>
             </div>
 
@@ -485,7 +485,7 @@ export default function LandingPage() {
               </div>
               <h3 className="text-xl font-bold text-white group-hover:text-indigo-400 transition-colors">Universal POS Gateway</h3>
               <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
-                Continuous real-time ingestion across Square, Shopify, Clover, and Lightspeed with automated quarantine isolation.
+                Continuous real-time webhook ingestion across Shopify, Square, and Lightspeed X-Series with automated quarantine isolation.
               </p>
             </div>
             <span className="text-xs font-bold text-indigo-400 flex items-center gap-1">

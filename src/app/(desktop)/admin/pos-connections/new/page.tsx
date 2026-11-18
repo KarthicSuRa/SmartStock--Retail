@@ -76,7 +76,7 @@ export default function POSMappingStudioPage() {
                 { id: 'shopify', name: 'Shopify POS', type: 'Webhook' },
                 { id: 'square', name: 'Square Register', type: 'REST & Webhook' },
                 { id: 'lightspeed', name: 'Lightspeed (X-Series)', type: 'Webhook' },
-                { id: 'clover', name: 'Clover Platform', type: 'Webhook SDK' },
+                { id: 'clover', name: 'Clover (not supported — pending implementation)', type: 'Webhook SDK' },
                 { id: 'database', name: 'SQL Database (Edge)', type: 'Direct SQL' },
                 { id: 'file_sftp', name: 'Batch SFTP Drop', type: 'CSV/XML File' },
               ].map((v) => (

@@ -1,13 +1,13 @@
 // /supabase/functions/_shared/pos/connectors/generic/generic-mapper.ts
 // SmartStock LiveRetail V2 — Generic Canonical POS Mapper
 
-import { IPOSCanonicalMapper, RawPOSEnvelope } from '../../connector-interface.ts';
+import { IPOSCanonicalMapper, POSMapperContext, RawPOSEnvelope } from '../../connector-interface.ts';
 import { CanonicalPOSTransaction, CanonicalPOSLine } from '../../canonical-schema.ts';
 
 export class GenericPOSMapper implements IPOSCanonicalMapper {
   async toCanonicalTransaction(
     raw: RawPOSEnvelope,
-    context: { tenant_id: string; store_id: string; pos_config_id: string }
+    context: POSMapperContext
   ): Promise<CanonicalPOSTransaction> {
     const p = raw.payload;
 
@@ -41,7 +41,7 @@ export class GenericPOSMapper implements IPOSCanonicalMapper {
     const isRefund = p.type === 'RETURN' || p.transaction_type === 'RETURN';
 
     return {
-      schema_version: '1.0',
+      schema_version: '1.1',
       transaction_id: `TXN-${context.tenant_id}-${raw.source_event_id}`,
       source_transaction_id: raw.source_event_id,
       source_system: raw.source_system,
@@ -53,7 +53,7 @@ export class GenericPOSMapper implements IPOSCanonicalMapper {
       status: isCancelled ? 'CANCELLED' : 'COMPLETED',
       business_timestamp: (p.timestamp as string) || (p.completed_at as string) || (p.created_at as string) || raw.received_at,
       received_timestamp: raw.received_at,
-      currency: (p.currency as string) || 'EUR',
+      currency: (p.currency as string) || context.currency || 'XXX',
       lines,
       subtotal: Number(p.subtotal || 0),
       tax_total: Number(p.tax_total || 0),

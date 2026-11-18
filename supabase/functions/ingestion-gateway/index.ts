@@ -20,10 +20,12 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   InventoryEventEnvelope,
   IngestionResult,
   ProjectionTask,
+  SourceSystem,
   RECONCILIATION_TRIGGER_EVENTS,
   APPROVAL_REQUIRED_EVENTS,
 } from "../_shared/event-model/types.ts";
@@ -33,6 +35,9 @@ import {
   normalizeTimestamp,
   classifyTimestamp,
 } from "../_shared/event-model/validator.ts";
+import { requireAuth } from "../_shared/security/require-auth.ts";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ---------------------------------------------------------------------------
 // CORS
@@ -53,40 +58,60 @@ const corsHeaders = {
 
 async function authenticateSource(
   req: Request,
-  supabase: ReturnType<typeof createClient>
+  supabase: SupabaseClient
 ): Promise<{ valid: boolean; source_system: string; tenant_id: string; error?: string }> {
-  const authHeader = req.headers.get("Authorization");
   const sourceSystem = req.headers.get("x-source-system") || "UNKNOWN";
-  const tenantIdHeader = req.headers.get("x-tenant-id");
 
-  // --- Internal service role (Edge Functions calling each other) ---
-  if (authHeader?.startsWith("Bearer ")) {
-    const token = authHeader.replace("Bearer ", "");
+  // A valid Supabase user JWT, or the service-role / internal token for
+  // service-to-service calls. There is deliberately no header-only path and no
+  // default tenant: `x-tenant-id` on its own proves nothing.
+  const outcome = await requireAuth(req, { allowService: true, defaultTenantId: "" });
+  if (!outcome.ok) {
+    return { valid: false, source_system: sourceSystem, tenant_id: "", error: outcome.error };
+  }
 
-    // Try verifying as a Supabase JWT first
-    const { data: { user }, error } = await supabase.auth.getUser(token);
-    if (!error && user) {
-      const tenantId =
-        user.app_metadata?.tenant_id ||
-        user.user_metadata?.tenant_id ||
-        tenantIdHeader ||
-        "default-tenant";
-      return { valid: true, source_system: sourceSystem, tenant_id: tenantId };
+  const tenantId = outcome.ctx.tenantId;
+  if (!UUID_RE.test(tenantId)) {
+    return {
+      valid: false,
+      source_system: sourceSystem,
+      tenant_id: "",
+      error: "Unauthorized: no tenant context. Service callers must assert x-tenant-id; user tokens must carry a tenant claim.",
+    };
+  }
+
+  // A user must actually belong to the tenant they are writing for. Without
+  // this check any authenticated user could post inventory into any tenant by
+  // setting the header.
+  if (outcome.ctx.kind === "user") {
+    const { data: membership, error: membershipError } = await supabase
+      .from("user_tenant_memberships")
+      .select("tenant_id")
+      .eq("user_id", outcome.ctx.userId!)
+      .eq("tenant_id", tenantId)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (membershipError) {
+      console.error("[ingestion-gateway] membership check failed:", membershipError.message);
+      return {
+        valid: false,
+        source_system: sourceSystem,
+        tenant_id: "",
+        error: "Unable to verify tenant membership",
+      };
+    }
+    if (!membership) {
+      return {
+        valid: false,
+        source_system: sourceSystem,
+        tenant_id: "",
+        error: "Forbidden: caller is not a member of the requested tenant",
+      };
     }
   }
 
-  // --- Fallback for development / single-tenant mode ---
-  // In production, tighten this to require valid JWT.
-  if (tenantIdHeader) {
-    return { valid: true, source_system: sourceSystem, tenant_id: tenantIdHeader };
-  }
-
-  // Default tenant for local development without auth
-  return {
-    valid: true,
-    source_system: sourceSystem,
-    tenant_id: "default-tenant",
-  };
+  return { valid: true, source_system: sourceSystem, tenant_id: tenantId };
 }
 
 // ---------------------------------------------------------------------------
@@ -94,7 +119,7 @@ async function authenticateSource(
 // ---------------------------------------------------------------------------
 
 async function checkDuplicate(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   tenantId: string,
   sourceSystem: string,
   sourceEventId: string
@@ -115,7 +140,7 @@ async function checkDuplicate(
 // ---------------------------------------------------------------------------
 
 async function evaluateSequence(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   tenantId: string,
   locationId: string,
   sourceSystem: string,
@@ -145,7 +170,7 @@ async function evaluateSequence(
 // Currently uses a simple projection_queue table (can upgrade to pg_notify later).
 
 async function enqueueProjection(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   task: ProjectionTask
 ): Promise<void> {
   const { error } = await supabase.from("projection_queue").insert({
@@ -171,7 +196,7 @@ async function enqueueProjection(
 // ---------------------------------------------------------------------------
 
 async function triggerReconciliation(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   tenantId: string,
   locationId: string,
   materialId?: string,
@@ -268,7 +293,7 @@ Deno.serve(async (req: Request) => {
 // ---------------------------------------------------------------------------
 
 async function processEvent(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   auth: { source_system: string; tenant_id: string },
   rawEvent: unknown
 ): Promise<IngestionResult> {
@@ -286,7 +311,7 @@ async function processEvent(
     // Build idempotency key if not provided
     if (!e.idempotency_key && e.source_system && e.source_event_id && e.tenant_id) {
       e.idempotency_key = buildIdempotencyKey(
-        e.source_system as string,
+        e.source_system as SourceSystem,
         e.source_event_id as string,
         e.tenant_id as string
       );

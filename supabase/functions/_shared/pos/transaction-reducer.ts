@@ -99,7 +99,16 @@ export class POSTransactionReducer {
    * returns with SELLABLE disposition produce positive numbers.
    */
   static computeTargetEffect(txn: CanonicalPOSTransaction): Record<string, number> {
-    if (txn.status === 'VOIDED' || txn.status === 'CANCELLED') {
+    // Only finalised states may move stock. An OPEN order (Square can deliver
+    // order.updated before payment) or an AUTHORIZED one has not sold anything
+    // yet; deducting here would understate on-hand and never be corrected
+    // because the later COMPLETED delivery reduces against the same effect.
+    if (
+      txn.status === 'VOIDED' ||
+      txn.status === 'CANCELLED' ||
+      txn.status === 'OPEN' ||
+      txn.status === 'AUTHORIZED'
+    ) {
       return {};
     }
 

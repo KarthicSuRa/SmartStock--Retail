@@ -243,12 +243,12 @@ export default function DesktopProcurementPage() {
             </div>
 
             <p className="text-xs text-blue-100 leading-relaxed font-medium">
-              Bundles all staged purchase requisitions into 1 single OData batch operation. Eliminates Digital Access Licensing fees.
+              Bundles all staged purchase requisitions into one OData <span className="font-mono">$batch</span> request. This reduces round trips only — each requisition still creates its own document, and SAP measures Digital Access per document line item.
             </p>
 
             <div className="bg-blue-950/80 p-4 rounded-2xl border border-blue-700/50 space-y-2 text-xs font-medium">
-              <div className="flex justify-between"><span className="text-blue-300">Target SAP Plant:</span><strong className="font-mono text-white">1001</strong></div>
-              <div className="flex justify-between"><span className="text-blue-300">Idempotency Token:</span><strong className="font-mono text-emerald-400">Active</strong></div>
+              <div className="flex justify-between"><span className="text-blue-300">Requisitions staged:</span><strong className="font-mono text-white">{stagedItems.length}</strong></div>
+              <div className="flex justify-between"><span className="text-blue-300">Idempotency:</span><strong className="font-mono text-emerald-400">Server-enforced</strong></div>
             </div>
 
             <button

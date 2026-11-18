@@ -19,12 +19,12 @@ interface POSConnectionItem {
   store_id: string;
   is_active: boolean;
   quality_level: string;
-  last_seen_at?: string;
-  feed_confidence: number;
+  last_seen_at?: string | null;
+  feed_confidence: number | null;
 }
 
 export default function POSConnectionsPage() {
-  const { tenantId, activeStoreId } = useStoreContext();
+  const { tenantId } = useStoreContext();
   const [connections, setConnections] = useState<POSConnectionItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -35,65 +35,50 @@ export default function POSConnectionsPage() {
   const fetchConnections = async () => {
     setLoading(true);
     try {
-      if (isSupabaseConfigured) {
-        const { data } = await supabase
-          .from('pos_configurations')
-          .select('*')
-          .eq('tenant_id', tenantId || 'default-tenant')
-          .order('created_at', { ascending: false });
-
-        if (data && data.length > 0) {
-          setConnections(
-            data.map((d: any) => ({
-              id: d.id,
-              pos_name: d.pos_name,
-              pos_type: d.pos_type,
-              store_id: d.store_id,
-              is_active: d.is_active,
-              quality_level: ['shopify', 'square', 'lightspeed'].includes(d.pos_type) ? 'Level A' : 'Level B',
-              last_seen_at: d.last_seen_at || new Date().toISOString(),
-              feed_confidence: 99,
-            }))
-          );
-          setLoading(false);
-          return;
-        }
+      if (!isSupabaseConfigured || !tenantId) {
+        setConnections([]);
+        return;
       }
 
-      // Mock connections for UI development
-      const mockConnections: POSConnectionItem[] = [
-        {
-          id: 'pos-cfg-01',
-          pos_name: 'Shopify POS — Amsterdam Flagship',
-          pos_type: 'shopify',
-          store_id: '1002',
-          is_active: true,
-          quality_level: 'Level A',
-          last_seen_at: new Date(Date.now() - 2000).toISOString(),
-          feed_confidence: 100,
-        },
-        {
-          id: 'pos-cfg-02',
-          pos_name: 'Square Register — Rotterdam Centraal',
-          pos_type: 'square',
-          store_id: '1001',
-          is_active: true,
-          quality_level: 'Level A',
-          last_seen_at: new Date(Date.now() - 4000).toISOString(),
-          feed_confidence: 98,
-        },
-        {
-          id: 'pos-cfg-03',
-          pos_name: 'NCR Edge File Stream — Eindhoven Store',
-          pos_type: 'generic_file_sftp',
-          store_id: '1005',
-          is_active: true,
-          quality_level: 'Level C',
-          last_seen_at: new Date(Date.now() - 15 * 60000).toISOString(),
-          feed_confidence: 94,
-        },
-      ];
-      setConnections(mockConnections);
+      const { data } = await supabase
+        .from('pos_configurations')
+        .select('id, pos_name, pos_type, store_id, is_active, last_seen_at')
+        .eq('tenant_id', tenantId)
+        .order('created_at', { ascending: false });
+
+      if (!data || data.length === 0) {
+        setConnections([]);
+        return;
+      }
+
+      const configIds = data.map((d: any) => d.id);
+      const { data: healthRows } = await supabase
+        .from('pos_feed_health')
+        .select('pos_config_id, feed_confidence, last_event_at')
+        .in('pos_config_id', configIds);
+
+      const healthByConfig = new Map(
+        (healthRows ?? []).map((h: any) => [h.pos_config_id, h])
+      );
+
+      setConnections(
+        data.map((d: any) => {
+          const health: any = healthByConfig.get(d.id);
+          return {
+            id: d.id,
+            pos_name: d.pos_name,
+            pos_type: d.pos_type,
+            store_id: d.store_id,
+            is_active: d.is_active,
+            quality_level: ['shopify', 'square', 'lightspeed'].includes(d.pos_type)
+              ? 'Level B (Webhook)'
+              : 'Custom',
+            last_seen_at: health?.last_event_at ?? d.last_seen_at ?? null,
+            feed_confidence:
+              typeof health?.feed_confidence === 'number' ? health.feed_confidence : null,
+          };
+        })
+      );
     } catch {
       setConnections([]);
     } finally {
@@ -130,39 +115,58 @@ export default function POSConnectionsPage() {
       </div>
 
       {/* Connection Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {connections.map((conn) => (
-          <div
-            key={conn.id}
-            className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs hover:shadow-md transition flex flex-col justify-between space-y-4"
-          >
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[10px] font-extrabold uppercase tracking-wider">
-                  {conn.pos_type}
-                </span>
-                <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">
-                  {conn.quality_level}
-                </span>
+      {loading ? (
+        <div className="bg-white border border-slate-200 rounded-3xl p-8 text-center text-xs text-slate-500">
+          Loading POS connections...
+        </div>
+      ) : connections.length === 0 ? (
+        <div className="bg-white border border-slate-200 rounded-3xl p-8 text-center space-y-2">
+          <p className="text-sm font-bold text-slate-800">No POS integrations configured</p>
+          <p className="text-xs text-slate-500">
+            Add a Shopify, Square, Lightspeed X-Series, or generic webhook connection to begin ingesting POS events.
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {connections.map((conn) => (
+            <div
+              key={conn.id}
+              className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs hover:shadow-md transition flex flex-col justify-between space-y-4"
+            >
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[10px] font-extrabold uppercase tracking-wider">
+                    {conn.pos_type}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">
+                    {conn.quality_level}
+                  </span>
+                </div>
+
+                <h3 className="text-base font-bold text-slate-900">{conn.pos_name}</h3>
+                <p className="text-xs text-slate-500 font-mono">Store ID: {conn.store_id}</p>
               </div>
 
-              <h3 className="text-base font-bold text-slate-900">{conn.pos_name}</h3>
-              <p className="text-xs text-slate-500 font-mono">Store ID: {conn.store_id}</p>
-            </div>
+              <div className="border-t border-slate-100 pt-4 flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <span className="text-[10px] text-slate-400 font-mono uppercase block">Feed Confidence</span>
+                  <span className="text-sm font-extrabold text-indigo-600 font-mono">
+                    {conn.feed_confidence !== null ? `${conn.feed_confidence}%` : 'Not reported'}
+                  </span>
+                </div>
 
-            <div className="border-t border-slate-100 pt-4 flex items-center justify-between">
-              <div className="space-y-0.5">
-                <span className="text-[10px] text-slate-400 font-mono uppercase block">Feed Confidence</span>
-                <span className="text-sm font-extrabold text-indigo-600 font-mono">{conn.feed_confidence}%</span>
+                <span className="text-[11px] text-slate-400 font-mono">
+                  {conn.last_seen_at
+                    ? `Last event: ${new Date(conn.last_seen_at).toLocaleString()}`
+                    : conn.is_active
+                    ? 'Active • No events yet'
+                    : 'Inactive'}
+                </span>
               </div>
-
-              <span className="text-[11px] text-slate-400 font-mono">
-                Active • 2s ago
-              </span>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

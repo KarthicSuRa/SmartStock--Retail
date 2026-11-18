@@ -151,10 +151,10 @@ export default function ManagerAnalyticsPage() {
               <h3 className="font-bold text-slate-900">Stockout Prevention Impact</h3>
               <div className="space-y-3">
                 {[
-                  { label: 'Stockouts prevented', value: '27 events', trend: 'up', color: 'emerald' },
-                  { label: 'Avg replenishment lead time', value: '2.4 days', trend: 'down', color: 'blue' },
-                  { label: 'OData API calls saved', value: '99.8%', trend: 'up', color: 'emerald' },
-                  { label: 'SAP named license savings', value: '€2,500/mo', trend: 'up', color: 'emerald' },
+                  { label: 'Protected revenue (period)', value: totalProtected > 0 ? `€${totalProtected.toLocaleString()}` : '—', trend: 'up', color: 'emerald' },
+                  { label: 'Average protection yield', value: avgYield > 0 ? `${avgYield.toFixed(1)}%` : '—', trend: 'up', color: 'blue' },
+                  { label: 'Digital Access basis', value: 'Per line item', trend: '', color: 'emerald' },
+                  { label: 'Document metering', value: 'Measured by SAP', trend: '', color: 'emerald' },
                 ].map(row => (
                   <div key={row.label} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
                     <span className="text-sm text-slate-600">{row.label}</span>
@@ -162,7 +162,9 @@ export default function ManagerAnalyticsPage() {
                       <span className="font-bold text-slate-900">{row.value}</span>
                       {row.trend === 'up'
                         ? <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
-                        : <TrendingDown className="w-3.5 h-3.5 text-blue-500" />
+                        : row.trend === 'down'
+                          ? <TrendingDown className="w-3.5 h-3.5 text-blue-500" />
+                          : null
                       }
                     </div>
                   </div>
@@ -171,13 +173,16 @@ export default function ManagerAnalyticsPage() {
             </div>
 
             <div className="bg-slate-950 border border-slate-800 rounded-2xl p-5 font-mono text-xs">
-              <p className="text-slate-400 text-[10px] uppercase tracking-wider mb-3 font-sans font-bold">🛡️ ERP License Compliance Savings</p>
+              <p className="text-slate-400 text-[10px] uppercase tracking-wider mb-3 font-sans font-bold">🛡️ SAP Digital Access — How Usage Is Counted</p>
               <div className="space-y-2 text-slate-300">
-                <div className="flex justify-between"><span>SAP FUE seats avoided</span><span className="text-emerald-400 font-bold">50 users</span></div>
-                <div className="flex justify-between"><span>Monthly license savings</span><span className="text-emerald-400 font-bold">~€2,500</span></div>
-                <div className="flex justify-between"><span>OData $batch consolidation</span><span className="text-blue-400 font-bold">12:1 ratio</span></div>
-                <div className="flex justify-between"><span>Digital Access fee reduction</span><span className="text-emerald-400 font-bold">99.8%</span></div>
+                <div className="flex justify-between"><span>Counting unit</span><span className="text-emerald-400 font-bold">Per line item</span></div>
+                <div className="flex justify-between"><span>Material / financial document</span><span className="text-emerald-400 font-bold">0.2 each</span></div>
+                <div className="flex justify-between"><span>Reads, updates, deletes</span><span className="text-blue-400 font-bold">Not metered</span></div>
+                <div className="flex justify-between"><span>OData $batch</span><span className="text-blue-400 font-bold">Transport only</span></div>
               </div>
+              <p className="text-[10px] text-slate-500 mt-3 font-sans leading-relaxed">
+                Usage is measured by SAP (RSUVM_DAC / SAP Passport). These lines describe the counting rule; they are not a saving estimate.
+              </p>
             </div>
           </>
         )}

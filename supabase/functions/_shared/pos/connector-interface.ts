@@ -19,10 +19,20 @@ export interface IPOSWebhookHandler {
   parse(rawBody: string, headers: Headers): Promise<RawPOSEnvelope>;
 }
 
+export interface POSMapperContext {
+  tenant_id: string;
+  store_id: string;
+  pos_config_id: string;
+  /** Configured currency, used only when the provider payload carries none. */
+  currency?: string;
+  /** Provider-specific settings from pos_configurations.config. */
+  config?: Record<string, unknown>;
+}
+
 export interface IPOSCanonicalMapper {
   toCanonicalTransaction(
     raw: RawPOSEnvelope,
-    context: { tenant_id: string; store_id: string; pos_config_id: string }
+    context: POSMapperContext
   ): Promise<CanonicalPOSTransaction>;
 }
 

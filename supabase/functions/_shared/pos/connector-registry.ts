@@ -42,6 +42,10 @@ export class POSConnectorRegistry {
 
   static getConnector(posType: string): IPOSConnector {
     this.initialize();
-    return this.registry.get(posType) || this.registry.get('generic_webhook')!;
+    const connector = this.registry.get(posType);
+    if (!connector) {
+      throw new Error(`Unsupported POS connector type: "${posType}"`);
+    }
+    return connector;
   }
 }

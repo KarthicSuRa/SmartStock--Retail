@@ -7,6 +7,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ProjectionRules, PositionState } from "../_shared/projection/rules.ts";
 
 const corsHeaders = {
@@ -224,7 +225,7 @@ Deno.serve(async (req: Request) => {
  * Replays all historical events in ascending order to rebuild the operational digital twin.
  */
 async function rebuildInventoryProjection(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   tenantId: string,
   locationId: string,
   materialId: string

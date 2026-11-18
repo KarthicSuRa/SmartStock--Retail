@@ -9,6 +9,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { requireAuth, authFailureResponse } from "../_shared/security/require-auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -20,6 +21,11 @@ Deno.serve(async (req: Request) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  // Writes reconciliation records and can raise operational cases, so it must
+  // not be callable anonymously.
+  const auth = await requireAuth(req, { allowService: true });
+  if (!auth.ok) return authFailureResponse(auth, corsHeaders);
+
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
@@ -27,7 +33,8 @@ Deno.serve(async (req: Request) => {
 
   try {
     const payload = await req.json().catch(() => ({}));
-    const { tenant_id, location_id, material_id, sap_qty } = payload;
+    const { location_id, material_id, sap_qty } = payload;
+    const tenant_id = payload.tenant_id ?? auth.ctx.tenantId;
 
     if (!tenant_id || !location_id || !material_id || sap_qty == null) {
       return new Response(

@@ -12,6 +12,13 @@ export interface ERPConfig {
   connection_status: 'active' | 'inactive' | 'error';
   last_sync_at?: string;
   metadata?: Record<string, unknown>;
+
+  // SAP org-unit defaults, as configured on erp_configurations. These are
+  // customer-specific and are never defaulted by the platform.
+  company_code?: string;
+  purchasing_org?: string;
+  purchasing_group?: string;
+
   created_at: string;
   updated_at: string;
 }
@@ -22,6 +29,8 @@ export interface SAPAuthConfig {
   token_url: string;
   cloud_connector_url?: string; // For on-premise S/4HANA
   certificate_thumbprint?: string;
+  /** OAuth scope, if the customer's communication arrangement requires one. */
+  scope?: string;
 }
 
 export interface OAuth2Config {
@@ -104,6 +113,31 @@ export interface InventoryMovement {
   retry_count: number;
   error_message?: string;
   created_at: string;
+
+  // ---- Optional SAP-specific attributes -------------------------------
+  // Only populated when the source system has the data. The SAP adapter
+  // refuses to invent any of these, because a wrong value here writes a
+  // wrong goods movement into the customer's stock ledger.
+  storage_location?: string;
+  batch?: string;
+  /** Receiving plant for a one-step transfer posting (SAP mvmt type 301). */
+  transfer_to_plant?: string;
+  /** Receiving storage location for a one-step transfer posting (301). */
+  transfer_to_storage_location?: string;
+  /**
+   * Explicit SAP movement type override (e.g. '551'). When set,
+   * `sap_goods_movement_code` must be set too; the adapter never guesses the
+   * pairing.
+   */
+  sap_movement_type?: string;
+  /**
+   * SAP `GoodsMovementCode`: 01 GR for PO, 02 GR for production order,
+   * 03 goods issue, 04 transfer posting, 05 other goods receipt,
+   * 06 reversal, 07 subcontracting adjustment.
+   */
+  sap_goods_movement_code?: string;
+  /** SAP movement reason code (MB_GRUND), when the customer requires one. */
+  sap_reason_code?: string;
 }
 
 // ==================== PROCUREMENT ====================
@@ -134,6 +168,8 @@ export interface PRItem {
   estimated_total_price?: number;
   erp_item_number?: string;
   delivery_date?: string;
+  /** SAP plant (WERKS) the item is requisitioned for. Mandatory for SAP. */
+  plant?: string;
 }
 
 export interface PurchaseOrder {
@@ -146,6 +182,8 @@ export interface PurchaseOrder {
   currency: string;
   status: 'OPEN' | 'PARTIALLY_DELIVERED' | 'DELIVERED' | 'INVOICED' | 'CANCELLED';
   created_at: string;
+  /** SAP document category. 'UB' (stock transport order) is rejected unless the target release exposes an STO API. */
+  po_type?: 'NB' | 'UB';
 }
 
 export interface POItem {
@@ -157,6 +195,8 @@ export interface POItem {
   uom: string;
   net_price: number;
   delivery_date: string;
+  /** SAP plant (WERKS) the item is ordered for. */
+  plant?: string;
 }
 
 export interface ERPCapabilities {
@@ -166,6 +206,19 @@ export interface ERPCapabilities {
   purchaseOrderCreate: boolean;
   batchSupported: boolean;
   apiVersions: Record<string, string>;
+}
+
+/** One row of a batched purchase-requisition submission. */
+export interface PRBatchItem {
+  stagedPrId: string;
+  material: string;
+  plant: string;
+  storageLocation?: string;
+  quantity: number;
+  uom: string;
+  vendor?: string;
+  deliveryDate?: string;
+  estimatedPrice?: number;
 }
 
 export interface PostingStatusResult {
@@ -179,6 +232,12 @@ export interface PostingStatusResult {
 // ==================== ADAPTER INTERFACE ====================
 
 export interface IERPAdapter {
+  /**
+   * True when the adapter is a development stand-in and does NOT talk to a real
+   * ERP. Callers must never present simulated document numbers as real ones.
+   */
+  readonly simulated: boolean;
+
   // Capability Discovery
   capabilities(): Promise<ERPCapabilities>;
 
@@ -195,6 +254,12 @@ export interface IERPAdapter {
   postInventoryMovements(movements: InventoryMovement[]): Promise<BatchResult<InventoryMovement>>;
   postPurchaseRequisition(pr: PurchaseRequisition): Promise<{ success: boolean; erp_pr_number?: string; errors?: string[] }>;
   postPurchaseOrder(po: PurchaseOrder): Promise<{ success: boolean; erp_po_number?: string; errors?: string[] }>;
+
+  /**
+   * Submits several requisitions in one ERP round trip. Optional: adapters that
+   * cannot batch are driven item-by-item by the caller instead.
+   */
+  executeBatchPR?(items: PRBatchItem[]): Promise<BatchResult<any>>;
   
   // Status check for OUTCOME_UNKNOWN resolution
   getPostingStatus(reference: string): Promise<PostingStatusResult>;
@@ -218,6 +283,8 @@ export interface BatchResult<T> {
     item: T;
     status: 'success' | 'failed' | 'partial';
     erp_document_number?: string;
+    /** SAP material document year (MJAHR), when the ERP returns one. */
+    erp_document_year?: string;
     error?: string;
   }>;
 }

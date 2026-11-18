@@ -169,6 +169,13 @@ export default function DashboardPage() {
 
   const criticalCount = alerts.filter(a => a.replenishment_status === 'CRITICAL_RISK').length;
 
+  // Derived from the alert rows actually loaded. Nothing here is a placeholder:
+  // if there are no alerts, the cards say so rather than showing a sample number.
+  const openAlertCount = alerts.length;
+  const averageLeadDays = alerts.length > 0
+    ? alerts.reduce((sum, a) => sum + (Number(a.vendor_lead_days) || 0), 0) / alerts.length
+    : null;
+
   return (
     <div className="space-y-6">
       
@@ -191,51 +198,53 @@ export default function DashboardPage() {
           </p>
         </div>
 
-        {/* Card 2: Protected Revenue */}
+        {/* Card 2: Open Replenishment Queue */}
         <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs hover:shadow-md hover:border-emerald-300 transition-all group">
           <div className="flex justify-between items-start mb-3">
             <div>
-              <p className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-700">Protected Revenue Yield</p>
-              <h3 className="text-3xl font-extrabold text-slate-900 font-mono mt-1">€38,200</h3>
+              <p className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-700">Replenishment Queue</p>
+              <h3 className="text-3xl font-extrabold text-slate-900 font-mono mt-1">{openAlertCount} <span className="text-xs text-slate-500 font-normal">SKUs</span></h3>
             </div>
             <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-600 group-hover:scale-110 transition-transform">
               <DollarSign className="w-5 h-5" />
             </div>
           </div>
-          <p className="text-xs text-emerald-700 font-bold flex items-center gap-1">
-            <TrendingUp className="w-3.5 h-3.5" /> +14.2% vs previous month
+          <p className="text-xs text-slate-500 font-medium flex items-center gap-1">
+            <TrendingUp className="w-3.5 h-3.5" /> Awaiting purchase requisition
           </p>
         </div>
 
-        {/* Card 3: OData Digital Access Efficiency */}
+        {/* Card 3: Digital Access Metering Basis */}
         <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs hover:shadow-md hover:border-blue-300 transition-all group">
           <div className="flex justify-between items-start mb-3">
             <div>
-              <p className="text-[11px] font-extrabold uppercase tracking-wider text-blue-700">OData API Batch Efficiency</p>
-              <h3 className="text-3xl font-extrabold text-slate-900 font-mono mt-1">99.8%</h3>
+              <p className="text-[11px] font-extrabold uppercase tracking-wider text-blue-700">Digital Access Metering</p>
+              <h3 className="text-3xl font-extrabold text-slate-900 font-mono mt-1">Per line</h3>
             </div>
             <div className="p-2.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-600 group-hover:scale-110 transition-transform">
               <ShieldCheck className="w-5 h-5" />
             </div>
           </div>
           <p className="text-xs text-slate-500 font-medium">
-            Idempotent batching active
+            Billed per created document line item (SAP RSUVM_DAC)
           </p>
         </div>
 
-        {/* Card 4: Velocity Trend */}
+        {/* Card 4: Supplier Lead Time */}
         <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs hover:shadow-md hover:border-purple-300 transition-all group">
           <div className="flex justify-between items-start mb-3">
             <div>
-              <p className="text-[11px] font-extrabold uppercase tracking-wider text-purple-700">Scan-to-Fulfill Velocity</p>
-              <h3 className="text-3xl font-extrabold text-slate-900 font-mono mt-1">+18.4%</h3>
+              <p className="text-[11px] font-extrabold uppercase tracking-wider text-purple-700">Average Supplier Lead Time</p>
+              <h3 className="text-3xl font-extrabold text-slate-900 font-mono mt-1">
+                {averageLeadDays === null ? '—' : `${averageLeadDays.toFixed(1)}d`}
+              </h3>
             </div>
             <div className="p-2.5 rounded-xl bg-purple-50 border border-purple-200 text-purple-600 group-hover:scale-110 transition-transform">
               <Zap className="w-5 h-5" />
             </div>
           </div>
           <p className="text-xs text-purple-700 font-bold">
-            Avg lead time: 1.2 days
+            {averageLeadDays === null ? 'No open alerts' : 'Across items awaiting replenishment'}
           </p>
         </div>
       </div>
