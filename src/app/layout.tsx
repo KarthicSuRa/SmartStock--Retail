@@ -2,6 +2,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { StoreProvider } from '@/hooks/useStoreContext';
+import { LanguageProvider } from '@/lib/i18n';
 
 export const metadata: Metadata = {
   title: 'SmartStock LiveRetail',
@@ -19,16 +20,18 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-scroll-behavior="smooth">
+    <html lang="en" data-scroll-behavior="smooth" suppressHydrationWarning>
       <head>
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
       </head>
       <body className="antialiased">
-        <StoreProvider>
-          {children}
-        </StoreProvider>
+        <LanguageProvider>
+          <StoreProvider>
+            {children}
+          </StoreProvider>
+        </LanguageProvider>
       </body>
     </html>
   );

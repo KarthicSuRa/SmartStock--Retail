@@ -6,12 +6,17 @@
 import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Shield, RefreshCw, Layers, AlertTriangle, ShieldAlert, Settings, FileText, Cpu, Globe2 } from 'lucide-react';
+import { Shield, RefreshCw, Layers, AlertTriangle, ShieldAlert, Cpu, Globe2, Network, FolderTree, KeyRound, ScrollText, FileText, Database, MonitorSmartphone } from 'lucide-react';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
   const adminTabs = [
+    { label: 'Org Structure', href: '/admin/org-structure', icon: Network },
+    { label: 'Category / MC', href: '/admin/categories', icon: FolderTree },
+    { label: 'Roles & Access', href: '/admin/roles', icon: KeyRound },
+    { label: 'Audit Logs', href: '/admin/audit', icon: FileText },
+    { label: 'Transaction Logs', href: '/admin/transaction-logs', icon: ScrollText },
     { label: 'Decision Governance', href: '/admin/decision-governance', icon: Cpu },
     { label: 'Context Intelligence', href: '/admin/context-intelligence', icon: Globe2 },
     { label: 'POS Control Tower', href: '/admin/pos-control-tower', icon: Shield },
@@ -19,6 +24,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { label: 'POS Mapping Studio', href: '/admin/pos-connections/new', icon: Layers },
     { label: 'Quarantined Events', href: '/admin/quarantine', icon: ShieldAlert },
     { label: 'Dead Letter Queue', href: '/admin/dead-letter', icon: AlertTriangle },
+    { label: 'Architecture', href: '/admin/architecture', icon: Database },
+    { label: 'Devices & Languages', href: '/admin/compatibility', icon: MonitorSmartphone },
   ];
 
   return (
