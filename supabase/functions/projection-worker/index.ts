@@ -61,16 +61,24 @@ Deno.serve(async (req: Request) => {
 
     if (fetchErr) throw fetchErr;
 
-    let processedCount = 0;
+    if (!queueItems || queueItems.length === 0) {
+      return new Response(
+        JSON.stringify({ status: "success", processed: 0, queue_size: 0 }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
+      );
+    }
+
+    const itemIds = queueItems.map((item) => item.id);
+    const failedIds: string[] = [];
+
+    // Mark all queued items as processing in a single batch (replaces N individual .eq() calls)
+    await supabase
+      .from("projection_queue")
+      .update({ status: "PROCESSING", processed_at: new Date().toISOString() })
+      .in("id", itemIds);
 
     for (const item of queueItems || []) {
       try {
-        // Mark as processing
-        await supabase
-          .from("projection_queue")
-          .update({ status: "PROCESSING", processed_at: new Date().toISOString() })
-          .eq("id", item.id);
-
         let resolvedMaterialId = item.material_id;
 
         // If material_id was not provided directly, lookup from raw_payload or SKU
@@ -95,10 +103,7 @@ Deno.serve(async (req: Request) => {
 
         if (!resolvedMaterialId) {
           // Cannot project without material context; mark failed
-          await supabase
-            .from("projection_queue")
-            .update({ status: "FAILED", last_error: "Missing material_id and unresolved SKU" })
-            .eq("id", item.id);
+          failedIds.push(item.id);
           continue;
         }
 
@@ -186,30 +191,32 @@ Deno.serve(async (req: Request) => {
             projection_version: nextState.projection_version,
             updated_at: new Date().toISOString(),
           });
+          failedIds.push(item.id);
+        } else {
+          // Mark queue item completed (individual — only successful items)
+          await supabase
+            .from("projection_queue")
+            .update({ status: "COMPLETED", processed_at: new Date().toISOString() })
+            .eq("id", item.id);
         }
-
-        // Mark queue item completed
-        await supabase
-          .from("projection_queue")
-          .update({ status: "COMPLETED", processed_at: new Date().toISOString() })
-          .eq("id", item.id);
-
-        processedCount++;
       } catch (err) {
         console.error(`[projection-worker] Error processing queue item ${item.id}:`, err);
-        await supabase
-          .from("projection_queue")
-          .update({
-            status: "FAILED",
-            attempts: (item.attempts || 0) + 1,
-            last_error: (err as Error).message,
-          })
-          .eq("id", item.id);
+        failedIds.push(item.id);
       }
     }
 
+    // Batch mark all failed items (single query instead of one per failed item)
+    if (failedIds.length > 0) {
+      await supabase
+        .from("projection_queue")
+        .update({ status: "FAILED", last_error: "Processed with errors" })
+        .in("id", failedIds);
+    }
+
+    const processedCount = (queueItems.length || 0) - failedIds.length;
+
     return new Response(
-      JSON.stringify({ status: "success", processed: processedCount, queue_size: queueItems?.length || 0 }),
+      JSON.stringify({ status: "success", processed: processedCount, queue_size: queueItems.length }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
     );
   } catch (err) {
