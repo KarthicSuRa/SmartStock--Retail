@@ -60,9 +60,9 @@ CREATE POLICY tenant_isolation_policies ON approval_policies
     FOR ALL
     USING (
         tenant_id::text = COALESCE(
-            auth.jwt() ->> 'tenant_id',
-            auth.jwt() -> 'app_metadata' ->> 'tenant_id',
-            auth.jwt() -> 'user_metadata' ->> 'tenant_id',
+            (select auth.jwt() ->> 'tenant_id'),
+            (select auth.jwt() -> 'app_metadata' ->> 'tenant_id'),
+            (select auth.jwt() -> 'user_metadata' ->> 'tenant_id'),
             'default-tenant'
         )
     );
