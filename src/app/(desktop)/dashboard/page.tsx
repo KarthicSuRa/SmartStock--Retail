@@ -182,7 +182,7 @@ export default function DashboardPage() {
       {/* ── TOP EXECUTIVE KPI METRICS (WHITE THEME) ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Card 1: Critical Stockout Risk */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs hover:shadow-md hover:border-rose-300 transition-all group">
+        <div className="op-card">
           <div className="flex justify-between items-start mb-3">
             <div>
               <p className="text-[11px] font-extrabold uppercase tracking-wider text-rose-600">Stockout Risk Imminent</p>
@@ -199,7 +199,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Card 2: Open Replenishment Queue */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs hover:shadow-md hover:border-emerald-300 transition-all group">
+        <div className="op-card">
           <div className="flex justify-between items-start mb-3">
             <div>
               <p className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-700">Replenishment Queue</p>
@@ -215,7 +215,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Card 3: Digital Access Metering Basis */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs hover:shadow-md hover:border-blue-300 transition-all group">
+        <div className="op-card">
           <div className="flex justify-between items-start mb-3">
             <div>
               <p className="text-[11px] font-extrabold uppercase tracking-wider text-blue-700">Digital Access Metering</p>
@@ -231,7 +231,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Card 4: Supplier Lead Time */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs hover:shadow-md hover:border-purple-300 transition-all group">
+        <div className="op-card">
           <div className="flex justify-between items-start mb-3">
             <div>
               <p className="text-[11px] font-extrabold uppercase tracking-wider text-purple-700">Average Supplier Lead Time</p>
