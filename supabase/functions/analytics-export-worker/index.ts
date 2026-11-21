@@ -26,7 +26,7 @@ serve(async (req) => {
 
     // 2. Fetch new operational events after watermark
     const { data: newEvents } = await supabase
-      .from('inventory_event_ledger')
+      .from('inventory_events')
       .select('*')
       .gt('created_at', lastEventTime)
       .order('created_at', { ascending: true })

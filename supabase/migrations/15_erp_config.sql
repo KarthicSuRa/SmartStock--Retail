@@ -114,6 +114,7 @@ CREATE INDEX IF NOT EXISTS idx_erp_config_tenant ON erp_configurations(tenant_id
 CREATE INDEX IF NOT EXISTS idx_erp_config_status ON erp_configurations(connection_status);
 CREATE INDEX IF NOT EXISTS idx_store_mapping_lookup ON erp_store_mappings(tenant_id, store_id, is_active);
 CREATE INDEX IF NOT EXISTS idx_inventory_movements_status ON inventory_movements(erp_status);
+CREATE INDEX IF NOT EXISTS idx_inventory_movements_tenant_store_sku ON inventory_movements(tenant_id, store_id, sku, movement_type, created_at DESC);
 
 -- Row Level Security
 ALTER TABLE erp_configurations ENABLE ROW LEVEL SECURITY;

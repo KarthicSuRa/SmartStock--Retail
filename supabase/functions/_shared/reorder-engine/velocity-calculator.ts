@@ -48,6 +48,8 @@ export class VelocityCalculator {
     const { data: dailySales, error } = await this.supabase
       .from('inventory_movements')
       .select('created_at, quantity')
+      .eq('tenant_id', tenantId)
+      .eq('store_id', storeId)
       .eq('sku', sku)
       .eq('movement_type', 'SALE')
       .gte('created_at', periodStart)
