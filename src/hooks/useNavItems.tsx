@@ -20,7 +20,15 @@ import {
   Truck,
   Users,
   Building,
-  FileCheck
+  FileCheck,
+  Warehouse,
+  ListChecks,
+  FileBarChart,
+  BookOpen,
+  FolderTree,
+  Network,
+  KeyRound,
+  ScrollText
 } from 'lucide-react';
 
 export interface NavItem {
@@ -38,12 +46,16 @@ export function useNavItems(role: string): NavItem[] {
     { label: 'Operations Home', href: '/home', icon: Home },
     { label: 'Actions Matrix', href: '/actions', icon: AlertCircle, badge: '12', badgeType: 'critical' },
     { label: 'Inventory Ledger', href: '/ledger', icon: Boxes },
+    { label: 'Back-Store Mapping', href: '/backstore', icon: Warehouse },
+    { label: 'Daily Tasks', href: '/tasks', icon: ListChecks },
     { label: 'Cycle Counts', href: '/counts', icon: CheckCircle2, badge: '5', badgeType: 'neutral' },
     { label: 'FEFO Expiry', href: '/fefo', icon: Clock, badge: '3', badgeType: 'critical' },
     { label: 'Shelf Health Vision', href: '/shelf-health', icon: Eye },
     { label: 'Floor Staff PWA', href: '/floor', icon: Smartphone },
     { label: 'Procurement Hub', href: '/procurement', icon: Truck, badge: '2', badgeType: 'neutral' },
     { label: 'Executive Analytics', href: '/insights', icon: BarChart2 },
+    { label: 'Reports', href: '/reports', icon: FileBarChart },
+    { label: 'Glossary', href: '/glossary', icon: BookOpen },
     { label: 'Admin Hub', href: '/admin', icon: Settings },
   ];
 
@@ -51,11 +63,45 @@ export function useNavItems(role: string): NavItem[] {
     case 'floor_worker':
     case 'floor_staff':
       return [
-        { label: 'Floor Tasks', href: '/floor', icon: Smartphone, badge: '6', badgeType: 'critical' },
+        { label: 'Daily Tasks', href: '/tasks', icon: ListChecks, badge: '6', badgeType: 'critical' },
+        { label: 'Floor Tasks', href: '/floor', icon: Smartphone },
+        { label: 'Back-Store Mapping', href: '/backstore', icon: Warehouse },
         { label: 'Barcode Scanner', href: '/floor/scan', icon: Package },
         { label: 'Guided Cycle Count', href: '/floor/count', icon: CheckCircle2 },
         { label: 'Damage Registration', href: '/floor/damage', icon: AlertCircle },
         { label: 'Vision Shelf Health', href: '/shelf-health', icon: Eye },
+        { label: 'Glossary', href: '/glossary', icon: BookOpen },
+      ];
+
+    case 'warehouse_staff':
+      return [
+        { label: 'Back-Store Mapping', href: '/backstore', icon: Warehouse, badge: 'BINS', badgeType: 'neutral' },
+        { label: 'Daily Tasks', href: '/tasks', icon: ListChecks },
+        { label: 'Barcode Scanner', href: '/floor/scan', icon: Package },
+        { label: 'Guided Cycle Count', href: '/floor/count', icon: CheckCircle2 },
+        { label: 'Damage Registration', href: '/floor/damage', icon: AlertCircle },
+        { label: 'Glossary', href: '/glossary', icon: BookOpen },
+      ];
+
+    case 'buyer':
+      return [
+        { label: 'Intelligent Radar', href: '/dashboard', icon: Activity },
+        { label: 'Procurement Hub', href: '/procurement', icon: Truck },
+        { label: 'Replenishment', href: '/replenishment', icon: RefreshCw },
+        { label: 'Category / MC', href: '/admin/categories', icon: FolderTree },
+        { label: 'Org Structure', href: '/admin/org-structure', icon: Network },
+        { label: 'Reports', href: '/reports', icon: FileBarChart },
+        { label: 'Glossary', href: '/glossary', icon: BookOpen },
+      ];
+
+    case 'auditor':
+      return [
+        { label: 'Audit Logs', href: '/admin/audit', icon: ScrollText },
+        { label: 'Transaction Logs', href: '/admin/transaction-logs', icon: AlertCircle },
+        { label: 'Inventory Ledger', href: '/ledger', icon: Boxes },
+        { label: 'Reports', href: '/reports', icon: FileBarChart },
+        { label: 'Roles & Access', href: '/admin/roles', icon: KeyRound },
+        { label: 'Glossary', href: '/glossary', icon: BookOpen },
       ];
 
     case 'regional_manager':
@@ -66,6 +112,8 @@ export function useNavItems(role: string): NavItem[] {
         { label: 'Multi-Store Ledger', href: '/ledger', icon: Boxes },
         { label: 'Network Inventory', href: '/inventory', icon: Package },
         { label: 'Executive Analytics', href: '/insights', icon: BarChart2 },
+        { label: 'Reports', href: '/reports', icon: FileBarChart },
+        { label: 'Org Structure', href: '/admin/org-structure', icon: Network },
         { label: 'POS Control Tower', href: '/admin/pos-control-tower', icon: Shield },
       ];
 
@@ -78,6 +126,8 @@ export function useNavItems(role: string): NavItem[] {
         { label: 'Procurement Hub', href: '/procurement', icon: Truck },
         { label: 'FEFO Expiry', href: '/fefo', icon: Clock },
         { label: 'Supply Analytics', href: '/insights', icon: BarChart2 },
+        { label: 'Reports', href: '/reports', icon: FileBarChart },
+        { label: 'Category / MC', href: '/admin/categories', icon: FolderTree },
       ];
 
     case 'integration_admin':
@@ -87,6 +137,7 @@ export function useNavItems(role: string): NavItem[] {
         { label: 'POS Reconciliation', href: '/admin/reconciliation', icon: RefreshCw },
         { label: 'Dead-Letter Queue', href: '/admin/dead-letter', icon: AlertCircle },
         { label: 'Quarantine Manager', href: '/admin/quarantine', icon: Shield },
+        { label: 'Transaction Logs', href: '/admin/transaction-logs', icon: ScrollText },
         { label: 'Decision Governance', href: '/admin/decision-governance', icon: FileCheck },
         { label: 'Admin Hub', href: '/admin', icon: Settings },
       ];
@@ -96,10 +147,17 @@ export function useNavItems(role: string): NavItem[] {
         { label: 'Intelligent Radar', href: '/dashboard', icon: Activity },
         { label: 'Admin Hub', href: '/admin', icon: Settings },
         { label: 'User Directory', href: '/admin/users', icon: Users },
+        { label: 'Roles & Access', href: '/admin/roles', icon: KeyRound },
+        { label: 'Org Structure', href: '/admin/org-structure', icon: Network },
+        { label: 'Category / MC', href: '/admin/categories', icon: FolderTree },
         { label: 'Store Hierarchy', href: '/admin/stores', icon: Building },
         { label: 'POS Control Tower', href: '/admin/pos-control-tower', icon: Shield },
         { label: 'Decision Policies', href: '/admin/policies', icon: FileCheck },
-        { label: 'Audit Log & SLA', href: '/admin/audit', icon: BarChart2 },
+        { label: 'Audit Logs', href: '/admin/audit', icon: BarChart2 },
+        { label: 'Transaction Logs', href: '/admin/transaction-logs', icon: ScrollText },
+        { label: 'Reports', href: '/reports', icon: FileBarChart },
+        { label: 'Architecture', href: '/admin/architecture', icon: Building },
+        { label: 'Devices & Languages', href: '/admin/compatibility', icon: Smartphone },
       ];
 
     case 'store_manager':

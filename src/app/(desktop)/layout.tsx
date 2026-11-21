@@ -12,6 +12,9 @@ import { ToastProvider } from '@/hooks/useToast';
 import { StoreSelector } from '@/components/domain/StoreSelector';
 import { SearchModal } from '@/components/ui/SearchModal';
 import { supabase } from '@/lib/supabase';
+import { useI18n, LANGUAGES, LangCode } from '@/lib/i18n';
+import { ROLES } from '@/lib/roles';
+import { setActivityActor, logActivity } from '@/lib/activity-log';
 import {
   Search,
   Bell,
@@ -20,7 +23,8 @@ import {
   Menu,
   X,
   ChevronRight,
-  Check
+  Check,
+  Globe2
 } from 'lucide-react';
 
 export default function DesktopLayout({ children }: { children: React.ReactNode }) {
@@ -28,6 +32,18 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
   const router = useRouter();
   const { role, setRole, density, setDensity, tenantId, activeStoreId } = useStoreContext();
   const navItems = useNavItems(role);
+  const { t, lang, setLang } = useI18n();
+
+  // Every audit / transaction log entry carries the signed-in user and active role
+  useEffect(() => {
+    setActivityActor('Karthic B', role);
+  }, [role]);
+
+  const changeRole = (next: string) => {
+    if (next === role) return;
+    logActivity({ module: 'auth', action: 'Role view switched', entity: `${role} → ${next}`, status: 'success', role: next });
+    setRole(next);
+  };
 
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -122,7 +138,7 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
           >
             <div className="flex items-center gap-2.5 min-w-0">
               <Icon className={`w-4 h-4 shrink-0 ${active ? 'text-[#14706B]' : 'text-[#667085]'}`} />
-              <span className="truncate">{label}</span>
+              <span className="truncate">{t(label)}</span>
             </div>
 
             {badge && (
@@ -174,18 +190,15 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
           {/* Role Switcher */}
           <div className="p-2.5 rounded-xl bg-[#F9FAFB] border border-[#EAECF0] space-y-2 text-[11px]">
             <div className="flex items-center justify-between text-[#667085]">
-              <span className="font-semibold">Role View</span>
+              <span className="font-semibold">{t('Role View')}</span>
               <select
                 value={role}
-                onChange={(e) => setRole(e.target.value)}
+                onChange={(e) => changeRole(e.target.value)}
                 className="bg-white border border-[#D0D5DD] text-[10px] font-bold rounded px-1.5 py-0.5 text-[#101828] cursor-pointer"
               >
-                <option value="store_manager">Store Manager</option>
-                <option value="floor_worker">Floor Staff</option>
-                <option value="regional_manager">Regional Manager</option>
-                <option value="supply_chain">Supply Chain</option>
-                <option value="integration_admin">Integration Admin</option>
-                <option value="system_admin">System Admin</option>
+                {ROLES.map((r) => (
+                  <option key={r.key} value={r.key}>{r.label}</option>
+                ))}
               </select>
             </div>
             <div className="flex items-center justify-between text-[#98A2B3] text-[10px] font-mono">
@@ -233,15 +246,12 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
                   <span className="font-semibold text-slate-600">Active Role</span>
                   <select
                     value={role}
-                    onChange={(e) => setRole(e.target.value)}
+                    onChange={(e) => changeRole(e.target.value)}
                     className="bg-white border border-[#D0D5DD] text-xs font-bold rounded px-2 py-1 text-[#101828]"
                   >
-                    <option value="store_manager">Store Manager</option>
-                    <option value="floor_worker">Floor Staff</option>
-                    <option value="regional_manager">Regional Manager</option>
-                    <option value="supply_chain">Supply Chain</option>
-                    <option value="integration_admin">Integration Admin</option>
-                    <option value="system_admin">System Admin</option>
+                {ROLES.map((r) => (
+                  <option key={r.key} value={r.key}>{r.label}</option>
+                ))}
                   </select>
                 </div>
                 <button
@@ -249,7 +259,7 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
                   className="w-full py-2 bg-rose-50 text-rose-700 font-bold rounded-lg text-xs flex items-center justify-center gap-2 mt-1"
                 >
                   <LogOut className="w-3.5 h-3.5" />
-                  <span>Sign Out</span>
+                  <span>{t('Sign Out')}</span>
                 </button>
               </div>
             </div>
@@ -291,6 +301,21 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
             {/* Header Right Action Items */}
             <div className="flex items-center gap-1.5 sm:gap-3">
               
+              {/* Language Switcher */}
+              <label className="relative flex items-center gap-1 text-[#667085]" title={t('Language')}>
+                <Globe2 className="w-4 h-4" />
+                <select
+                  value={lang}
+                  onChange={(e) => setLang(e.target.value as LangCode)}
+                  aria-label={t('Language')}
+                  className="bg-transparent text-[11px] font-semibold text-[#344054] cursor-pointer max-w-[64px] sm:max-w-none focus:outline-none"
+                >
+                  {LANGUAGES.map((l) => (
+                    <option key={l.code} value={l.code}>{l.native}</option>
+                  ))}
+                </select>
+              </label>
+
               {/* Density Mode Toggle (Hidden on mobile) */}
               <button
                 onClick={() => setDensity(density === 'compact' ? 'comfortable' : 'compact')}
@@ -426,7 +451,7 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
                         className="w-full p-2 rounded-lg text-rose-600 hover:bg-rose-50 text-xs font-bold flex items-center gap-2 transition-colors"
                       >
                         <LogOut className="w-3.5 h-3.5" />
-                        <span>Sign Out</span>
+                        <span>{t('Sign Out')}</span>
                       </button>
                     </div>
                   </div>
