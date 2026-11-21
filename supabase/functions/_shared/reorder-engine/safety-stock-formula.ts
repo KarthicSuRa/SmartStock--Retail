@@ -3,7 +3,7 @@
 export interface SafetyStockInput {
   forecastVelocityDaily: number;
   leadTimeDays: number;
-  leadTimeVariabilityPct: number;
+  coefficientOfVariation: number; // CV of daily demand (from velocity calculator)
   serviceLevelPct: number;
   reviewPeriodDays: number;
 }
