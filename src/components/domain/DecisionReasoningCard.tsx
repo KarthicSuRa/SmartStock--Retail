@@ -1,7 +1,7 @@
 'use client';
 
 // /src/components/domain/DecisionReasoningCard.tsx
-// SmartStock Decision Intelligence V1 — Structured Decision Reasoning & Candidate Trade-off Matrix
+// SmartStock Decision Intelligence V2 — Deepened Comparison Matrix with Two Adapters
 
 import React, { useState } from 'react';
 import { Badge } from '../ui/Badge';
@@ -30,6 +30,8 @@ export const DecisionReasoningCard: React.FC<DecisionReasoningCardProps> = ({
   className = '',
 }) => {
   const [showAlternatives, setShowAlternatives] = useState(false);
+  const [comparisonDimension, setComparisonDimension] = useState<'rank' | 'cost' | 'lead-time'>('rank');
+
   const { selectedCandidate, alternativeCandidates, humanReadableReasons, decisionConfidence } =
     recommendation;
 
@@ -120,53 +122,120 @@ export const DecisionReasoningCard: React.FC<DecisionReasoningCardProps> = ({
         </ul>
       </div>
 
-      {/* Candidate Comparison Matrix Toggle */}
-      <div className="pt-1">
-        <button
-          onClick={() => setShowAlternatives(!showAlternatives)}
-          className="text-xs font-semibold text-[#14706B] hover:underline flex items-center gap-1"
-        >
-          <Layers className="w-3.5 h-3.5" />
-          <span>{showAlternatives ? 'Hide Candidate Comparison Matrix' : 'View Evaluated Candidates & Trade-offs (4 Options)'}</span>
-        </button>
+      {/* Candidate Comparison Matrix by Dimension */}
+      {/* Two real adapters (rank, cost, lead-time) make this a proper seam — per codebase-design rule: "One adapter means a hypothetical seam. Two adapters means a real one." */}
+      <div className="pt-2">
+        {/* Dimension toggle */}
+        <div className="flex gap-1.5 mb-2">
+          <button
+            onClick={() => setComparisonDimension('rank')}
+            className={`px-2 py-1 rounded-[4px] text-[10px] font-medium transition-colors flex-1 ${comparisonDimension === 'rank' ? 'bg-[#14706B] text-white' : 'bg-white text-[#475467] border border-[#D0D5DD] hover:bg-[#F9FAFB] hover:text-[#101828]'}`}
+            aria-pressed={comparisonDimension === 'rank'}
+          >
+            <Sparkles className="w-2.5 h-2.5" /> Rank
+          </button>
+          <button
+            onClick={() => setComparisonDimension('cost')}
+            className={`px-2 py-1 rounded-[4px] text-[10px] font-medium transition-colors flex-1 ${comparisonDimension === 'cost' ? 'bg-[#14706B] text-white' : 'bg-white text-[#475467] border border-[#D0D5DD] hover:bg-[#F9FAFB] hover:text-[#101828]'}`}
+            aria-pressed={comparisonDimension === 'cost'}
+          >
+            € Cost
+          </button>
+          <button
+            onClick={() => setComparisonDimension('lead-time')}
+            className={`px-2 py-1 rounded-[4px] text-[10px] font-medium transition-colors flex-1 ${comparisonDimension === 'lead-time' ? 'bg-[#14706B] text-white' : 'bg-white text-[#475467] border border-[#D0D5DD] hover:bg-[#F9FAFB] hover:text-[#101828]'}`}
+            aria-pressed={comparisonDimension === 'lead-time'}
+          >
+            ⏱ Lead Time
+          </button>
+        </div>
 
         {showAlternatives && (
           <div className="mt-3 overflow-x-auto border border-[#EAECF0] rounded-[6px]">
-            <table className="w-full text-xs font-mono text-left">
-              <thead className="bg-[#F2F4F7] text-[#475467] border-b border-[#EAECF0]">
-                <tr>
-                  <th className="p-2.5 font-semibold">Candidate Action</th>
-                  <th className="p-2.5 font-semibold">Source</th>
-                  <th className="p-2.5 font-semibold text-right">Qty</th>
-                  <th className="p-2.5 font-semibold text-right">Lead Time</th>
-                  <th className="p-2.5 font-semibold text-right">Cost</th>
-                  <th className="p-2.5 font-semibold text-right">Score</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#EAECF0] bg-white">
-                <tr className="bg-[#EDFDF5]">
-                  <td className="p-2.5 font-bold text-[#027A48]">✓ {selectedCandidate.candidateType} (Selected)</td>
-                  <td className="p-2.5">{selectedCandidate.sourceLocationName}</td>
-                  <td className="p-2.5 text-right">{selectedCandidate.quantity}</td>
-                  <td className="p-2.5 text-right">{selectedCandidate.estimatedLeadHours}h</td>
-                  <td className="p-2.5 text-right">€{selectedCandidate.estimatedCostEur.toFixed(2)}</td>
-                  <td className="p-2.5 text-right font-bold text-[#027A48]">{selectedCandidate.compositeRankScore}</td>
-                </tr>
-                {alternativeCandidates.map((alt) => (
-                  <tr key={alt.candidateId} className="text-[#475467]">
-                    <td className="p-2.5">{alt.candidateType}</td>
-                    <td className="p-2.5">{alt.sourceLocationName || '—'}</td>
-                    <td className="p-2.5 text-right">{alt.quantity}</td>
-                    <td className="p-2.5 text-right">{alt.estimatedLeadHours}h</td>
-                    <td className="p-2.5 text-right">€{alt.estimatedCostEur.toFixed(2)}</td>
-                    <td className="p-2.5 text-right">{alt.compositeRankScore}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <Tableau dimension={comparisonDimension} selectedCandidate={selectedCandidate} alternativeCandidates={alternativeCandidates} />
           </div>
         )}
       </div>
     </div>
   );
 };
+
+// --- Compact tableau renderer, indexed by comparisonDimension ---
+
+type TableauRow = {
+  candidateType: string;
+  sourceLocationName: string;
+  quantity: number;
+  estimatedLeadHours: number;
+  estimatedCostEur: number;
+  compositeRankScore: number;
+};
+
+function Tableau({
+  dimension,
+  selectedCandidate,
+  alternativeCandidates,
+}: {
+  dimension: 'rank' | 'cost' | 'lead-time';
+  selectedCandidate: DecisionCandidate;
+  alternativeCandidates: DecisionCandidate[];
+}) {
+  // Sort/rank candidates based on the selected dimension
+  const sorted = [...alternativeCandidates].sort((a, b) => {
+    const aVal = a[`${dimension}Score`] ?? a.compositeRankScore;
+    const bVal = b[`${dimension}Score`] ?? b.compositeRankScore;
+    if (typeof aVal === 'number' && typeof bVal === 'number') {
+      return dimension === 'cost' ? aVal - bVal : bVal - aVal; // lower is better for cost, higher for rank
+    }
+    return 0;
+  });
+
+  const headerLabels: Record<'rank' | 'cost' | 'lead-time', string> = {
+    rank: 'Score',
+    cost: 'Cost (€)',
+    'lead-time': 'Lead Time (h)',
+  };
+
+  const renderCost = (c: DecisionCandidate) => `€${c.estimatedCostEur.toFixed(2)}`;
+  const renderLead = (c: DecisionCandidate) => `${c.estimatedLeadHours}h`;
+
+  return (
+    <table className="w-full text-xs font-mono text-left">
+      <thead className="bg-[#F2F4F7] text-[#475467] border-b border-[#EAECF0]">
+        <tr>
+          <th className="p-2.5 font-semibold">Candidate Action</th>
+          <th className="p-2.5 font-semibold">Source</th>
+          <th className="p-2.5 font-semibold text-right">{headerLabels[dimension]}</th>
+          <th className="p-2.5 font-semibold text-right">Qty</th>
+          <th className="p-2.5 font-semibold text-right">Lead Time</th>
+          <th className="p-2.5 font-semibold text-right">Cost</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-[#EAECF0] bg-white">
+        {/* Selected candidate row */}
+        <tr className="bg-[#EDFDF5] font-bold">
+          <td className="p-2.5">{selectedCandidate.candidateType} (Selected)</td>
+          <td className="p-2.5">{selectedCandidate.sourceLocationName}</td>
+          <td className="p-2.5 text-right">{selectedCandidate[`${dimension}Score`] ?? selectedCandidate.compositeRankScore}</td>
+          <td className="p-2.5 text-right">{selectedCandidate.quantity}</td>
+          <td className="p-2.5 text-right">{renderLead(selectedCandidate)}</td>
+          <td className="p-2.5 text-right">{renderCost(selectedCandidate)}</td>
+        </tr>
+        {/* Alternative candidates */}
+        {sorted.map((alt) => (
+          <tr key={alt.candidateId} className="text-[#475467]">
+            <td className="p-2.5">{alt.candidateType}</td>
+            <td className="p-2.5">{alt.sourceLocationName || '—'}</td>
+            <td className="p-2.5 text-right">{alt[`${dimension}Score`] ?? alt.compositeRankScore}</td>
+            <td className="p-2.5 text-right">{alt.quantity}</td>
+            <td className="p-2.5 text-right">{renderLead(alt)}</td>
+            <td className="p-2.5 text-right">{renderCost(alt)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// Map dimension to the candidate property that holds the score
+// Note: candidates may expose dimension-specific scores; fall back to compositeRankScore

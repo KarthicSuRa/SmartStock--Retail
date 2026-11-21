@@ -190,7 +190,7 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
             </div>
             <div className="flex items-center justify-between text-[#98A2B3] text-[10px] font-mono">
               <span>Tenant</span>
-              <span>{tenantId || 'default-tenant'}</span>
+              <span>{tenantId || '(tenant not set)'}</span>
             </div>
           </div>
         </aside>

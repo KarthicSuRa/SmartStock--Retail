@@ -65,7 +65,7 @@ export const AnalyticsQualityControlTower: React.FC<
         </div>
 
         <Badge
-          status={pipelineHealthy === undefined ? 'neutral' : pipelineHealthy ? 'healthy' : 'critical'}
+          status={pipelineHealthy === undefined ? 'neutral' : pipelineHealthy ? 'healthy' : 'critical' as const}
           size="sm"
         >
           {pipelineHealthy === undefined

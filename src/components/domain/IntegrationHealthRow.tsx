@@ -45,7 +45,7 @@ export const IntegrationHealthRow: React.FC<IntegrationHealthRowProps> = ({
     >
       <div className="space-y-1 flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <Badge status={statusMap[integration.status] || 'neutral'} size="sm">
+          <Badge status={statusMap[integration.status] || 'healthy'} size="sm">
             {integration.status}
           </Badge>
           {integration.isShadowMode && (
