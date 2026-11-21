@@ -333,29 +333,66 @@ export class SAPAdapter extends BaseERPAdapter {
   async fetchStockBaselines(store_id: string): Promise<StockBaseline[]> {
     return this.withRetry(async () => {
       const plant = await this.resolvePlant(store_id);
-      // "to_MaterialStockTP" does not exist; the quantities navigation is
-      // "to_MatlStkInAcctMod" and stock type 01 = unrestricted use.
+      // SAP stock type codes: 01=unrestricted, 02=blocked, 03=inspection, 04=quality
+      // We fetch all stock types and categorize them locally so the caller gets
+      // a complete picture rather than only unrestricted use.
+      const filter = encodeURIComponent(`Plant eq '${plant}'`);
       const response = await this.sapRequest(
-        `${SVC_MATERIAL_STOCK}/A_MaterialStock` +
-        `?$filter=${encodeURIComponent(`Plant eq '${plant}' and InventoryStockType eq '01'`)}` +
-        `&$expand=to_MatlStkInAcctMod`,
+        `${SVC_MATERIAL_STOCK}/A_MaterialStock?$filter=${filter}&$top=5000`,
       );
 
       if (!response.ok) throw new Error(`Failed to fetch stock: ${response.status}`);
       const data = await response.json();
 
+      // Categorize by stock type
+      const byStockType: Record<string, any[]> = {};
+      (data.d?.results ?? []).forEach((stock: any) => {
+        const stk = stock.InventoryStockType ?? '01';
+        if (!byStockType[stk]) byStockType[stk] = [];
+        byStockType[stk].push(stock);
+      });
+
+      // Sum quantities per category
+      const readStockQuantity = (nav: any): number => {
+        const rows = Array.isArray(nav?.results) ? nav.results : nav ? [nav] : [];
+        return rows.reduce(
+          (sum: number, row: any) => sum + (parseFloat(row?.MatlWrhsStkQtyInMatlBaseUnit ?? '0') || 0),
+          0,
+        );
+      };
+
+      const unrestricted = (byStockType['01'] || []).reduce(
+        (sum, stock) => sum + this.readStockQuantity(stock.to_MatlStkInAcctMod), 0,
+      );
+      const blocked = (byStockType['02'] || []).reduce(
+        (sum, stock) => sum + this.readStockQuantity(stock.to_MatlStkInAcctMod), 0,
+      );
+      const inspection = (byStockType['03'] || []).reduce(
+        (sum, stock) => sum + this.readStockQuantity(stock.to_MatlStkInAcctMod), 0,
+      );
+      const quality = (byStockType['04'] || []).reduce(
+        (sum, stock) => sum + this.readStockQuantity(stock.to_MatlStkInAcctMod), 0,
+      );
+
+      const total = unrestricted + blocked + inspection + quality;
+
       return (data.d?.results ?? []).map((stock: any) => {
-        const qty = this.readStockQuantity(stock);
+        const stk = stock.InventoryStockType ?? '01';
+        const qty = this.readStockQuantity(stock.to_MatlStkInAcctMod);
         return {
           sku: stock.Material,
           store_id,
           erp_plant: stock.Plant,
           erp_storage_location: stock.StorageLocation || this.rawDefaults().defaultStorageLocation || '0001',
-          quantity_unrestricted: qty,
-          quantity_in_quality_inspection: 0,
-          quantity_blocked: 0,
-          atp_quantity: qty,
+          // Per-stock-type quantities (can be summed by caller)
+          quantity_unrestricted: stk === '01' ? qty : 0,
+          quantity_in_quality_inspection: stk === '03' ? qty : 0,
+          quantity_blocked: stk === '02' ? qty : 0,
+          // Also expose total across all types for convenience
+          atp_quantity: total,
           last_updated: new Date().toISOString(),
+          // Expose stock type so callers can filter/aggregate as needed
+          stock_type: stk,
         };
       });
     }, 'fetchStockBaselines');
@@ -1030,14 +1067,60 @@ export class SAPAdapter extends BaseERPAdapter {
 
   async reconcileStock(store_id: string, _sku?: string): Promise<ReconciliationResult> {
     const sapStock = await this.fetchStockBaselines(store_id);
+    const erpTotal = sapStock.reduce((sum, s) => sum + (s.atp_quantity ?? s.quantity_unrestricted ?? 0), 0);
+
+    // Query the operational inventory ledger for the local twin state.
+    // We sum sellable_qty (or estimated_on_hand) per SKU to compare against ERP.
+    // If no SKU filter was requested, we still compute a store-level delta.
+    const skuFilter = _sku
+      ? `sku eq '${_sku}'`
+      : `store_id eq '${store_id}'`;
+    const { data: ledger, error } = await supabase
+      .from('inventory_position')
+      .select('sellable_qty, material_id')
+      .eq('tenant_id', this.config.tenant_id ?? 'default-tenant')
+      .eq('location_id', store_id)
+      .eq('reconciliation_status', 'MATCHED');
+
+    if (error) {
+      console.error('[sap-adapter] reconcileStock ledger query error:', error);
+      // Fall back to zero local total so the discrepancy is still visible.
+    }
+
+    const localTotal = ledger
+      ?.reduce((sum, row) => sum + (row.sellable_qty ?? 0), 0) ?? 0;
+
+    const variance = localTotal - erpTotal;
+    const variancePercentage = erpTotal
+      ? Math.round((variance / erpTotal) * 100)
+      : 0;
+
+    // Collect per-SKU discrepancies when a specific SKU was requested
+    const discrepancies: Array<{ sku: string; local: number; erp: number; variance: number }> = [];
+    if (_sku && ledger) {
+      ledger.forEach((row: any) => {
+        const erpEntry = sapStock.find((s: any) => s.sku === row.material_id);
+        if (erpEntry) {
+          const local = row.sellable_qty ?? 0;
+          const erpQty = erpEntry.atp_quantity ?? erpEntry.quantity_unrestricted ?? 0;
+          discrepancies.push({
+            sku: row.material_id,
+            local,
+            erp: erpQty,
+            variance: local - erpQty,
+          });
+        }
+      });
+    }
+
     return {
       store_id,
-      erp_total: sapStock.reduce((sum, s) => sum + s.quantity_unrestricted, 0),
-      local_total: 0, // Populated by the caller from the operational ledger
-      variance: 0,
-      variance_percentage: 0,
+      erp_total: erpTotal,
+      local_total: localTotal,
+      variance,
+      variance_percentage,
       last_common_transaction: new Date().toISOString(),
-      discrepancies: [],
+      discrepancies,
     };
   }
 
@@ -1096,7 +1179,30 @@ export class SAPAdapter extends BaseERPAdapter {
   private async resolvePlant(store_id: string): Promise<string> {
     const metadata = (this.config.metadata ?? {}) as Record<string, any>;
     const map = (metadata.plant_map ?? {}) as Record<string, string>;
-    return map[store_id] ?? store_id;
+
+    // Priority 1: explicit plant map
+    if (map[store_id]) return map[store_id];
+
+    // Priority 2: fall back to store_id only if it looks like a plant ID
+    // (3-digit numeric code). If store_id is alphanumeric or has prefixes,
+    // treat it as a store reference and throw a clear error so the caller
+    // cannot silently post to the wrong plant.
+    const fallback = map['*'];
+    if (fallback) return fallback;
+
+    // Heuristic: 3-digit numeric = likely a plant ID; anything else = likely
+    // a store code and should not be used as a plant without explicit mapping.
+    if (/^\d{3}$/.test(store_id)) {
+      console.warn(`[sap-adapter] No plant mapping for store_id '${store_id}'; using as plant fallback. ` +
+        'Configure plant_map in erp_configurations.metadata for correct behavior.');
+      return store_id;
+    }
+
+    throw new SapConfigurationError(
+      `SAP plant not configured for store '${store_id}'. ` +
+      'Add an entry to erp_configurations.metadata.plant_map keyed by store_id, ` +
+      'or configure a wildcard plant_map["*"] for a default plant.'
+    );
   }
 
   async healthCheck(): Promise<{ status: 'healthy' | 'degraded' | 'down'; latency_ms: number }> {
