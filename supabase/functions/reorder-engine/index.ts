@@ -1,34 +1,56 @@
 // Supabase Edge Function: reorder-engine
-// Main Predictive Evaluation & Automated Procurement Engine
+// Predictive evaluation and (opt-in) procurement staging.
+//
+// Safety rules enforced here:
+//   * Demand factors with missing/stale data are NOT applied; they are visible
+//     in data_quality and block auto-staging.
+//   * Safety stock uses real demand CV and lead-time variability; no NaN, no
+//     invented vendor, no double-counted safety stock.
+//   * Auto-staging is opt-in per SKU/store, gated by confidence and value, and
+//     never auto-releases a PO. STO recommendations always need a human because
+//     the SAP adapter refuses UB documents.
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { VelocityCalculator } from "../_shared/reorder-engine/velocity-calculator.ts"
-import { ContextMultipliers } from "../_shared/reorder-engine/context-multipliers.ts"
+import { ContextMultipliers, ContextualResult } from "../_shared/reorder-engine/context-multipliers.ts"
 import { SafetyStockFormula } from "../_shared/reorder-engine/safety-stock-formula.ts"
 import { STOOptimizer } from "../_shared/reorder-engine/sto-optimizer.ts"
 import { ProcurementGenerator } from "../_shared/reorder-engine/procurement-generator.ts"
+import { requireAuth, authFailureResponse, resolveTenantScope } from "../_shared/security/require-auth.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-tenant-id',
 }
 
+const MODEL_VERSION = 'reorder-v2-gated'
+const OPEN_PR_STATUSES = ['staged', 'approved', 'submitted']
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    status,
+  })
+}
+
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+
+  const auth = await requireAuth(req, { allowService: true })
+  if (!auth.ok) return authFailureResponse(auth, corsHeaders)
+  const scope = resolveTenantScope(auth.ctx, req.headers.get('x-tenant-id'))
+  if (!scope.ok) return authFailureResponse(scope, corsHeaders)
+  const tenantId = scope.tenantId
 
   try {
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     )
-
     const payload = await req.json().catch(() => ({}))
-    const tenantId = req.headers.get('x-tenant-id') || payload.tenant_id || 'default-tenant'
     const { store_id, material_id } = payload
-    
+
     const velocityCalc = new VelocityCalculator(supabase)
     const contextMult = new ContextMultipliers(supabase)
     const safetyStock = new SafetyStockFormula()
@@ -36,7 +58,6 @@ Deno.serve(async (req) => {
     const procurement = new ProcurementGenerator(supabase)
 
     let materials: any[] = []
-    
     if (material_id) {
       const { data } = await supabase
         .from('material_master')
@@ -48,93 +69,180 @@ Deno.serve(async (req) => {
     } else if (store_id) {
       const { data } = await supabase
         .from('live_inventory_ledger')
-        .select('store_id, material_id, sku, description, uom, current_calculated_stock, safety_stock, reorder_point, stock_status')
+        .select('store_id, material_id, sku, description, uom, current_calculated_stock')
         .eq('tenant_id', tenantId)
         .eq('store_id', store_id)
       materials = data || []
     } else {
       const { data } = await supabase
         .from('live_inventory_ledger')
-        .select('store_id, material_id, sku, description, uom, current_calculated_stock, safety_stock, reorder_point, stock_status')
+        .select('store_id, material_id, sku, description, uom, current_calculated_stock')
         .eq('tenant_id', tenantId)
       materials = data || []
     }
 
     const results: any[] = []
+    let stagedCount = 0
+    let blockedCount = 0
 
     for (const material of materials) {
       const matId = material.material_id || material.id
-      const stoId = store_id || material.store_id || '1001'
-      
-      const { data: config } = await supabase
-        .from('reorder_config')
-        .select('*')
-        .eq('tenant_id', tenantId)
-        .eq('store_id', stoId)
-        .eq('material_id', matId)
-        .maybeSingle()
-
-      const lookbackDays = config?.velocity_lookback_days || 14
-      const smoothingFactor = config?.velocity_smoothing_factor || 0.30
-      const leadTimeDays = config?.lead_time_days || 7
-      const leadTimeVariabilityPct = config?.lead_time_variability_pct || 20.0
-      const serviceLevelPct = config?.service_level_pct || 95.0
-      const reviewPeriodDays = config?.review_period_days || 7
-
-      const velocity = await velocityCalc.calculate({
-        tenantId,
-        storeId: stoId,
-        materialId: matId,
-        lookbackDays,
-        smoothingFactor
-      })
-
-      const context = await contextMult.calculate({
-        tenantId,
-        storeId: stoId,
-        materialId: matId,
-        forecastDate: new Date(Date.now() + (leadTimeDays * 86400000)),
-        baseVelocity: velocity.adjustedVelocityDaily
-      })
-
-      const forecastVelocity = Math.max(0.1, velocity.adjustedVelocityDaily * context.compositeMultiplier)
-
-      const safety = safetyStock.calculate({
-        forecastVelocityDaily: forecastVelocity,
-        leadTimeDays,
-        leadTimeVariabilityPct,
-        serviceLevelPct,
-        reviewPeriodDays
-      })
-
-      const currentStock = material.current_calculated_stock || 0
-      const runoutDays = forecastVelocity > 0 ? currentStock / forecastVelocity : 999
-
-      let alertType: string | null = null
-      let severity = 'medium'
-
-      if (currentStock <= safety.safetyStock) {
-        alertType = 'CRITICAL_RISK'
-        severity = 'critical'
-      } else if (currentStock <= safety.reorderPoint) {
-        alertType = 'REPLENISHMENT_NEEDED'
-        severity = 'high'
-      } else if (runoutDays <= leadTimeDays) {
-        alertType = 'STOCKOUT_IMMIMENT'
-        severity = 'medium'
+      const stoId = store_id || material.store_id
+      if (!stoId || !matId) {
+        results.push({ material_id: matId, error: 'store_id or material_id missing' })
+        continue
       }
 
-      if (alertType) {
-        const targetLevel = safety.reorderPoint + safety.safetyStock + (forecastVelocity * leadTimeDays)
-        const recommendedQty = Math.max(10, targetLevel - currentStock)
+      try {
+        const { data: config } = await supabase
+          .from('reorder_config')
+          .select('*')
+          .eq('tenant_id', tenantId)
+          .eq('store_id', stoId)
+          .eq('material_id', matId)
+          .maybeSingle()
+
+        const lookbackDays = config?.velocity_lookback_days ?? 14
+        const leadTimeDays = Number(config?.lead_time_days ?? 7)
+        const leadTimeVariabilityPct = Number(config?.lead_time_variability_pct ?? 20)
+        const serviceLevelPct = Number(config?.service_level_pct ?? 95)
+        const reviewPeriodDays = Number(config?.review_period_days ?? 7)
+
+        const velocity = await velocityCalc.calculate({
+          tenantId,
+          storeId: stoId,
+          materialId: matId,
+          lookbackDays,
+          smoothingFactor: config?.velocity_smoothing_factor ?? 0.30,
+        })
+
+        const context: ContextualResult = await contextMult.calculate({
+          tenantId,
+          storeId: stoId,
+          materialId: matId,
+          forecastDate: new Date(Date.now() + leadTimeDays * 86400000),
+          baseVelocity: velocity.adjustedVelocityDaily,
+          disabledFactors: {
+            weather: config?.disable_weather_factor === true,
+            holiday: config?.disable_holiday_factor === true,
+            promotion: config?.disable_promo_factor === true,
+          },
+        })
+
+        const forecastVelocity = Math.max(0, velocity.adjustedVelocityDaily * context.compositeMultiplier)
+        const safety = safetyStock.calculate({
+          forecastVelocityDaily: forecastVelocity,
+          leadTimeDays,
+          demandCoefficientOfVariation: velocity.coefficientOfVariation,
+          leadTimeVariabilityPct,
+          serviceLevelPct,
+          reviewPeriodDays,
+        })
+
+        const currentStock = Number(material.current_calculated_stock ?? 0)
+
+        // Avoid double-ordering stock that is already on a staged requisition.
+        const { data: openPRs, error: inboundError } = await supabase
+          .from('staged_prs')
+          .select('qty_rounded')
+          .eq('tenant_id', tenantId)
+          .eq('store_id', stoId)
+          .eq('material_id', matId)
+          .in('status', OPEN_PR_STATUSES)
+        if (inboundError) console.warn('[reorder-engine] inbound PR lookup failed:', inboundError.message)
+        const inboundQty = (openPRs ?? []).reduce(
+          (sum: number, row: any) => sum + Number(row.qty_rounded ?? 0), 0,
+        )
+
+        const runoutDays = forecastVelocity > 0 ? currentStock / forecastVelocity : 999
+        let alertType: string | null = null
+        let severity = 'medium'
+        if (currentStock <= safety.safetyStock) {
+          alertType = 'CRITICAL_RISK'
+          severity = 'critical'
+        } else if (currentStock <= safety.reorderPoint) {
+          alertType = 'REPLENISHMENT_NEEDED'
+          severity = 'high'
+        } else if (runoutDays <= leadTimeDays) {
+          alertType = 'STOCKOUT_IMMIMENT'
+          severity = 'medium'
+        }
+
+        if (!alertType) {
+          results.push({
+            material_id: matId,
+            sku: material.sku,
+            status: 'HEALTHY',
+            runout_days: Number(runoutDays.toFixed(2)),
+            velocity: Number(forecastVelocity.toFixed(2)),
+          })
+          continue
+        }
+
+        // Order-up-to covers the protection window at the chosen service
+        // level, minus stock on hand and stock already on order.
+        const targetLevel = safety.coverageDemand + safety.safetyStock
+        const recommendedQty = Math.max(0, targetLevel - currentStock - inboundQty)
 
         const stoCheck = await stoOptimizer.check({
           tenantId,
           requestingStoreId: stoId,
           materialId: matId,
           neededQty: recommendedQty,
-          uom: material.uom || 'EA'
+          uom: material.uom ?? 'EA',
         })
+
+        // Confidence is read from the inventory integrity engine. Missing or
+        // low-confidence stock must not drive an automatic commitment.
+        const { data: position } = await supabase
+          .from('inventory_position')
+          .select('confidence_score, confidence_classification')
+          .eq('tenant_id', tenantId)
+          .eq('location_id', stoId)
+          .eq('material_id', matId)
+          .maybeSingle()
+        const confidenceScore = position?.confidence_score ?? null
+        const minConfidence = Number(config?.min_confidence_score ?? 70)
+
+        const unreliableSignals = Object.values(context.dataQuality)
+          .filter((s) => s === 'UNAVAILABLE' || s === 'STALE')
+        let blockedReason: string | null = null
+
+        if (recommendedQty <= 0) blockedReason = 'No net requirement after on-hand and open requisitions'
+        else if (stoCheck.canFulfillViaSTO) blockedReason = 'STO recommendation requires human approval (SAP adapter refuses UB documents)'
+        else if (confidenceScore === null) blockedReason = 'No inventory confidence score; cannot auto-stage'
+        else if (confidenceScore < minConfidence) blockedReason = `Inventory confidence ${confidenceScore} below ${minConfidence}`
+        else if (unreliableSignals.length) blockedReason = `Unreliable context signals: ${unreliableSignals.join(', ')}`
+        else if (config?.auto_reorder_max_qty !== null && config?.auto_reorder_max_qty !== undefined &&
+                 recommendedQty > Number(config.auto_reorder_max_qty)) {
+          blockedReason = `Recommended quantity exceeds auto_reorder_max_qty (${config.auto_reorder_max_qty})`
+        }
+
+        const explanation = {
+          model_version: MODEL_VERSION,
+          base_velocity_daily: velocity.baseVelocityDaily,
+          adjusted_velocity_daily: velocity.adjustedVelocityDaily,
+          demand_cv: velocity.coefficientOfVariation,
+          stockout_days: velocity.stockoutDays,
+          trend_pct: velocity.trendPct,
+          context_multipliers: {
+            weather: context.weatherMultiplier,
+            holiday: context.holidayMultiplier,
+            promotion: context.promotionMultiplier,
+            composite: context.compositeMultiplier,
+          },
+          data_quality: context.dataQuality,
+          reasoning: context.reasoning,
+          safety_stock_formula: safety.safetyStockFormula,
+          lead_time_days: leadTimeDays,
+          review_period_days: reviewPeriodDays,
+          service_level_pct: serviceLevelPct,
+          coverage_demand: safety.coverageDemand,
+          target_level: targetLevel,
+          current_stock: currentStock,
+          inbound_qty: inboundQty,
+          runout_days: Number(runoutDays.toFixed(2)),
+        }
 
         const { data: alert } = await supabase.from('reorder_alerts').insert({
           tenant_id: tenantId,
@@ -143,78 +251,96 @@ Deno.serve(async (req) => {
           alert_type: alertType,
           severity,
           current_stock: currentStock,
-          uom: material.uom || 'EA',
+          uom: material.uom ?? 'EA',
           safety_stock: safety.safetyStock,
           reorder_point: safety.reorderPoint,
-          runout_days: parseFloat(runoutDays.toFixed(2)),
+          runout_days: Number(runoutDays.toFixed(2)),
           recommended_qty: recommendedQty,
           recommended_method: stoCheck.canFulfillViaSTO ? 'STO' : (severity === 'critical' ? 'EMERGENCY_PO' : 'PR'),
-          recommended_source_store_id: stoCheck.sourceStoreId,
-          status: 'open'
+          recommended_source_store_id: stoCheck.sourceStoreId ?? null,
+          inbound_qty: inboundQty,
+          forecast_explanation: explanation,
+          model_version: MODEL_VERSION,
+          confidence_score: confidenceScore,
+          data_quality: context.dataQuality,
+          blocked_reason: blockedReason,
+          status: 'open',
         }).select().single()
 
-        // Auto-stage procurement
-        const autoReorder = config?.auto_reorder ?? true
-        if (autoReorder && recommendedQty > 0) {
-          const { stagedPrId } = await procurement.generate({
-            tenantId,
-            storeId: stoId,
-            materialId: matId,
-            sku: material.sku,
-            currentStock,
-            recommendedQty,
-            uom: material.uom || 'EA',
-            fulfillmentMethod: stoCheck.canFulfillViaSTO ? 'STO' : 'EXTERNAL_PR',
-            sourceStoreId: stoCheck.sourceStoreId,
-            vendorId: config?.preferred_vendor_id,
-            alertId: alert?.id,
-            executionMode: severity === 'critical' ? 'IMMEDIATE' : 'BATCH',
-            urgencyReason: `${alertType}: Runout in ${runoutDays.toFixed(1)} days`
-          })
-
-          if (alert?.id) {
-            await supabase.from('reorder_alerts').update({
-              status: 'staged',
-              staged_pr_id: stagedPrId
-            }).eq('id', alert.id)
+        let staged = false
+        const autoReorder = config?.auto_reorder === true
+        if (autoReorder && !blockedReason) {
+          try {
+            const { stagedPrId } = await procurement.generate({
+              tenantId,
+              storeId: stoId,
+              materialId: matId,
+              sku: material.sku,
+              currentStock,
+              recommendedQty,
+              uom: material.uom ?? 'EA',
+              fulfillmentMethod: 'EXTERNAL_PR',
+              vendorId: config?.preferred_vendor_id ?? undefined,
+              alertId: alert?.id,
+              // Critical alerts are NOT auto-released unless explicitly enabled.
+              executionMode:
+                severity === 'critical' && config?.auto_release_critical === true ? 'IMMEDIATE' : 'BATCH',
+              urgencyReason: `${alertType}: runout in ${runoutDays.toFixed(1)} days`,
+            })
+            if (alert?.id) {
+              await supabase.from('reorder_alerts').update({
+                status: 'staged',
+                staged_pr_id: stagedPrId,
+                recommended_vendor_id: config?.preferred_vendor_id ?? null,
+              }).eq('id', alert.id)
+            }
+            staged = true
+            stagedCount++
+          } catch (err) {
+            blockedReason = (err as Error).message
+            if (alert?.id) {
+              await supabase.from('reorder_alerts').update({ blocked_reason: blockedReason }).eq('id', alert.id)
+            }
           }
         }
 
+        if (blockedReason) blockedCount++
         results.push({
           material_id: matId,
           sku: material.sku,
           alert: alertType,
           severity,
           current_stock: currentStock,
-          runout_days: runoutDays.toFixed(2),
+          runout_days: Number(runoutDays.toFixed(2)),
           recommended_qty: recommendedQty,
           fulfillment: stoCheck.canFulfillViaSTO ? 'STO' : 'EXTERNAL',
-          staged: true
+          confidence_score: confidenceScore,
+          data_quality: context.dataQuality,
+          staged,
+          blocked_reason: blockedReason,
         })
-      } else {
+      } catch (err) {
+        // One bad SKU must not abort the whole planning run; make it visible.
         results.push({
           material_id: matId,
           sku: material.sku,
-          status: 'HEALTHY',
-          runout_days: runoutDays.toFixed(2),
-          velocity: forecastVelocity.toFixed(2)
+          error: (err as Error).message,
         })
       }
     }
 
-    return new Response(JSON.stringify({
+    return json({
       status: 'completed',
       tenant_id: tenantId,
       evaluated: materials.length,
-      alerts_generated: results.filter(r => r.alert).length,
-      results
-    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 })
-
+      alerts_generated: results.filter((r) => r.alert).length,
+      staged: stagedCount,
+      blocked: blockedCount,
+      model_version: MODEL_VERSION,
+      results,
+    })
   } catch (error) {
     console.error('[reorder-engine] Execution error:', error)
-    return new Response(JSON.stringify({ 
-      status: 'failed',
-      error: (error as Error).message 
-    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 })
+    return json({ status: 'failed', error: (error as Error).message }, 500)
   }
 })

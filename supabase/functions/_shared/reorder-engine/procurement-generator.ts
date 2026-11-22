@@ -29,7 +29,7 @@ export class ProcurementGenerator {
 
     const vendorInfo = await this.resolveVendor(tenantId, materialId, vendorId);
     const roundedQty = this.applyRounding(recommendedQty, vendorInfo.roundingValue, vendorInfo.minOrderQty);
-    const unitPrice = vendorInfo.contractNetPrice || 0;
+    const unitPrice = vendorInfo.contractNetPrice;
     const totalPrice = roundedQty * unitPrice;
 
     const { data: stagedPr, error } = await this.supabase
@@ -102,37 +102,38 @@ export class ProcurementGenerator {
 
     const { data, error } = await query.maybeSingle();
 
-    // Fallback if material_vendor_link is missing
+    // Never invent a vendor or a price. A missing/ambiguous vendor link is a
+    // business data problem and must surface as a blocked recommendation.
     if (error || !data) {
-      const { data: mat } = await this.supabase
-        .from('material_master')
-        .select('description, standard_price')
-        .eq('id', materialId)
-        .maybeSingle();
+      throw new Error(
+        'No active primary purchasing-info record for this material. ' +
+        'Configure material_vendor_link (vendor, MOQ, rounding, lead time, contract price) before auto-staging procurement.',
+      );
+    }
 
-      return {
-        vendorId: undefined,
-        vendorCode: 'VEND-DEFAULT',
-        vendorName: 'Primary Wholesale Vendor',
-        currency: 'EUR',
-        minOrderQty: 1,
-        roundingValue: 1,
-        leadTimeDays: 7,
-        contractNetPrice: mat?.standard_price || 0,
-        description: mat?.description || 'Material'
-      };
+    const vendorCode = data.vendor_master?.vendor_code;
+    const currency = data.vendor_master?.currency;
+    const leadTimeDays = Number(data.planned_delivery_days);
+    const contractNetPrice = Number(data.contract_net_price);
+
+    if (!data.vendor_id || !vendorCode || !currency || !Number.isFinite(leadTimeDays) || leadTimeDays <= 0 ||
+        !Number.isFinite(contractNetPrice) || contractNetPrice <= 0) {
+      throw new Error(
+        'Purchasing-info record is incomplete (vendor code, currency, lead time or contract price missing). ' +
+        'Auto-staging requires verified commercial data; no defaults are applied.',
+      );
     }
 
     return {
       vendorId: data.vendor_id,
-      vendorCode: data.vendor_master?.vendor_code || 'V001',
-      vendorName: data.vendor_master?.vendor_name || 'Vendor',
-      currency: data.vendor_master?.currency || 'EUR',
-      minOrderQty: data.min_order_qty || 1,
-      roundingValue: data.rounding_value || 1,
-      leadTimeDays: data.planned_delivery_days || 7,
-      contractNetPrice: data.contract_net_price || 0,
-      description: data.material_master?.description || ''
+      vendorCode,
+      vendorName: data.vendor_master?.vendor_name ?? vendorCode,
+      currency,
+      minOrderQty: Number(data.min_order_qty ?? 1),
+      roundingValue: Number(data.rounding_value ?? 1),
+      leadTimeDays,
+      contractNetPrice,
+      description: data.material_master?.description ?? '',
     };
   }
 

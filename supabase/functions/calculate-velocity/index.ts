@@ -5,6 +5,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { VelocityCalculator } from "../_shared/reorder-engine/velocity-calculator.ts"
 import { ContextMultipliers } from "../_shared/reorder-engine/context-multipliers.ts"
+import { requireAuth, authFailureResponse, resolveTenantScope } from "../_shared/security/require-auth.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -16,6 +17,12 @@ Deno.serve(async (req) => {
     return new Response('ok', { headers: corsHeaders })
   }
 
+  const auth = await requireAuth(req, { allowService: true })
+  if (!auth.ok) return authFailureResponse(auth, corsHeaders)
+  const scope = resolveTenantScope(auth.ctx, req.headers.get('x-tenant-id'))
+  if (!scope.ok) return authFailureResponse(scope, corsHeaders)
+  const tenantId = scope.tenantId
+
   try {
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -23,7 +30,6 @@ Deno.serve(async (req) => {
     )
 
     const requestData = await req.json().catch(() => ({}))
-    const tenantId = req.headers.get('x-tenant-id') || requestData.tenant_id || 'default-tenant'
     const storeId = requestData.store_id
 
     const velocityCalc = new VelocityCalculator(supabase)
