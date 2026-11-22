@@ -354,66 +354,38 @@ export class SAPAdapter extends BaseERPAdapter {
   async fetchStockBaselines(store_id: string): Promise<StockBaseline[]> {
     return this.withRetry(async () => {
       const plant = await this.resolvePlant(store_id);
-      // SAP stock type codes: 01=unrestricted, 02=blocked, 03=inspection, 04=quality
-      // We fetch all stock types and categorize them locally so the caller gets
-      // a complete picture rather than only unrestricted use.
+      // InventoryStockType (NSDM_LBBSA) values used here:
+      //   01 Unrestricted-Use   02 Stock in Quality Inspection
+      //   03 Returns            06 Stock in Transit
+      //   07 Blocked Stock      08 Restricted-Use   10 GR Blocked Stock
+      // The quantities live on the navigation property, so it must be expanded.
       const filter = encodeURIComponent(`Plant eq '${plant}'`);
       const response = await this.sapRequest(
-        `${SVC_MATERIAL_STOCK}/A_MaterialStock?$filter=${filter}&$top=5000`,
+        `${SVC_MATERIAL_STOCK}/A_MaterialStock?$filter=${filter}` +
+        `&$expand=to_MatlStkInAcctMod&$top=5000`,
       );
 
       if (!response.ok) throw new Error(`Failed to fetch stock: ${response.status}`);
       const data = await response.json();
 
-      // Categorize by stock type
-      const byStockType: Record<string, any[]> = {};
-      (data.d?.results ?? []).forEach((stock: any) => {
-        const stk = stock.InventoryStockType ?? '01';
-        if (!byStockType[stk]) byStockType[stk] = [];
-        byStockType[stk].push(stock);
-      });
-
-      // Sum quantities per category
-      const readStockQuantity = (nav: any): number => {
-        const rows = Array.isArray(nav?.results) ? nav.results : nav ? [nav] : [];
-        return rows.reduce(
-          (sum: number, row: any) => sum + (parseFloat(row?.MatlWrhsStkQtyInMatlBaseUnit ?? '0') || 0),
-          0,
-        );
-      };
-
-      const unrestricted = (byStockType['01'] || []).reduce(
-        (sum, stock) => sum + this.readStockQuantity(stock.to_MatlStkInAcctMod), 0,
-      );
-      const blocked = (byStockType['02'] || []).reduce(
-        (sum, stock) => sum + this.readStockQuantity(stock.to_MatlStkInAcctMod), 0,
-      );
-      const inspection = (byStockType['03'] || []).reduce(
-        (sum, stock) => sum + this.readStockQuantity(stock.to_MatlStkInAcctMod), 0,
-      );
-      const quality = (byStockType['04'] || []).reduce(
-        (sum, stock) => sum + this.readStockQuantity(stock.to_MatlStkInAcctMod), 0,
-      );
-
-      const total = unrestricted + blocked + inspection + quality;
-
       return (data.d?.results ?? []).map((stock: any) => {
-        const stk = stock.InventoryStockType ?? '01';
+        const stockType = stock.InventoryStockType ?? '01';
         const qty = this.readStockQuantity(stock.to_MatlStkInAcctMod);
         return {
           sku: stock.Material,
           store_id,
           erp_plant: stock.Plant,
           erp_storage_location: stock.StorageLocation || this.rawDefaults().defaultStorageLocation || '0001',
-          // Per-stock-type quantities (can be summed by caller)
-          quantity_unrestricted: stk === '01' ? qty : 0,
-          quantity_in_quality_inspection: stk === '03' ? qty : 0,
-          quantity_blocked: stk === '02' ? qty : 0,
-          // Also expose total across all types for convenience
-          atp_quantity: total,
+          // One row per stock type. Callers sum the category they care about.
+          quantity_unrestricted: stockType === '01' ? qty : 0,
+          quantity_in_quality_inspection: stockType === '02' ? qty : 0,
+          quantity_blocked: stockType === '07' || stockType === '10' ? qty : 0,
+          quantity_in_transit: stockType === '06' ? qty : 0,
+          // ATP is unrestricted-use stock only; QI/blocked/returns are not
+          // available to promise without an explicit release.
+          atp_quantity: stockType === '01' ? qty : 0,
           last_updated: new Date().toISOString(),
-          // Expose stock type so callers can filter/aggregate as needed
-          stock_type: stk,
+          stock_type: stockType,
         };
       });
     }, 'fetchStockBaselines');

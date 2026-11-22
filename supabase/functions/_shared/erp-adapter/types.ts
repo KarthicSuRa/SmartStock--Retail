@@ -94,11 +94,14 @@ export interface StockBaseline {
   quantity_unrestricted: number;
   quantity_in_quality_inspection: number;
   quantity_blocked: number;
+  /** Stock in transit (InventoryStockType 06); zero when the source cannot report it. */
+  quantity_in_transit?: number;
   atp_quantity: number;        // Available-to-Promise
   last_updated: string;
   /**
-   * SAP InventoryStockType for this row: 01 unrestricted, 02 blocked,
-   * 03 inspection, 04 quality. Present when the source can supply it.
+   * SAP InventoryStockType (NSDM_LBBSA) for this row: 01 unrestricted-use,
+   * 02 quality inspection, 03 returns, 06 in transit, 07 blocked,
+   * 08 restricted-use, 10 GR blocked. Present when the source can supply it.
    */
   stock_type?: string;
 }
