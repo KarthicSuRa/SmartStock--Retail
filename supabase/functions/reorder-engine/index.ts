@@ -129,15 +129,92 @@ Deno.serve(async (req) => {
           },
         })
 
-        const forecastVelocity = Math.max(0, velocity.adjustedVelocityDaily * context.compositeMultiplier)
-        const safety = safetyStock.calculate({
-          forecastVelocityDaily: forecastVelocity,
+        // A persisted P50/P90 forecast replaces the statistical formula ONLY
+        // when its measured accuracy is inside the agreed thresholds.
+        const todayIso = new Date().toISOString().split('T')[0]
+        const horizonEnd = new Date(Date.now() + (leadTimeDays + 30) * 86400000).toISOString().split('T')[0]
+        const { data: forecastRows } = await supabase
+          .from('demand_forecasts')
+          .select('horizon_days, model_version, p50_qty, p90_qty')
+          .eq('tenant_id', tenantId)
+          .eq('store_id', stoId)
+          .eq('material_id', matId)
+          .gte('forecast_date', todayIso)
+          .lte('forecast_date', horizonEnd)
+          .order('forecast_date', { ascending: true })
+          .limit(60)
+
+        let quantilePlan: {
+          expectedVelocity: number;
+          safetyStockQty: number;
+          reorderPoint: number;
+          targetLevel: number;
+          formula: string;
+          modelVersion: string;
+          p50: number;
+          p90: number;
+        } | null = null
+        let forecastDrifted = false
+
+        if (forecastRows?.length) {
+          const modelVersion = String(forecastRows[0].model_version)
+          const { data: accuracy } = await supabase
+            .from('forecast_accuracy')
+            .select('status, backtest_wape, backtest_p90_coverage, wape, p90_coverage')
+            .eq('tenant_id', tenantId)
+            .eq('store_id', stoId)
+            .eq('material_id', matId)
+            .eq('model_version', modelVersion)
+            .order('evaluation_date', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+
+          forecastDrifted = accuracy?.status === 'DRIFT'
+          const wape = accuracy?.backtest_wape ?? accuracy?.wape
+          const coverage = accuracy?.backtest_p90_coverage ?? accuracy?.p90_coverage
+          const trusted = !forecastDrifted &&
+            (wape === null || wape === undefined || Number(wape) <= 0.35) &&
+            (coverage === null || coverage === undefined || Number(coverage) >= 0.8)
+          const windowRows = forecastRows.filter((r) => Number(r.horizon_days) <= leadTimeDays)
+
+          if (trusted && windowRows.length >= Math.min(leadTimeDays, 3)) {
+            const p50 = windowRows.reduce((s, r) => s + Number(r.p50_qty ?? 0), 0)
+            const p90 = windowRows.reduce((s, r) => s + Number(r.p90_qty ?? 0), 0)
+            const expectedVelocity = p50 / leadTimeDays
+            const target = p90 + expectedVelocity * reviewPeriodDays
+            quantilePlan = {
+              expectedVelocity,
+              safetyStockQty: Math.max(0, p90 - p50),
+              reorderPoint: p90,
+              targetLevel: target,
+              formula: `Quantile forecast over ${windowRows.length} day(s): P90 ${p90.toFixed(2)} - P50 ${p50.toFixed(2)}`,
+              modelVersion,
+              p50,
+              p90,
+            }
+          }
+        }
+
+        const statistical = safetyStock.calculate({
+          forecastVelocityDaily: Math.max(0, velocity.adjustedVelocityDaily * context.compositeMultiplier),
           leadTimeDays,
           demandCoefficientOfVariation: velocity.coefficientOfVariation,
           leadTimeVariabilityPct,
           serviceLevelPct,
           reviewPeriodDays,
         })
+
+        const forecastVelocity = quantilePlan?.expectedVelocity ??
+          Math.max(0, velocity.adjustedVelocityDaily * context.compositeMultiplier)
+        const safety = quantilePlan
+          ? {
+              safetyStock: quantilePlan.safetyStockQty,
+              reorderPoint: quantilePlan.reorderPoint,
+              coverageDemand: quantilePlan.p90,
+              safetyStockFormula: quantilePlan.formula,
+            }
+          : statistical
+        const targetLevel = quantilePlan?.targetLevel ?? statistical.coverageDemand + statistical.safetyStock
 
         const currentStock = Number(material.current_calculated_stock ?? 0)
 
@@ -179,9 +256,7 @@ Deno.serve(async (req) => {
           continue
         }
 
-        // Order-up-to covers the protection window at the chosen service
-        // level, minus stock on hand and stock already on order.
-        const targetLevel = safety.coverageDemand + safety.safetyStock
+        // Order-up-to minus stock on hand and stock already on order.
         const recommendedQty = Math.max(0, targetLevel - currentStock - inboundQty)
 
         const stoCheck = await stoOptimizer.check({
@@ -213,6 +288,7 @@ Deno.serve(async (req) => {
         else if (confidenceScore === null) blockedReason = 'No inventory confidence score; cannot auto-stage'
         else if (confidenceScore < minConfidence) blockedReason = `Inventory confidence ${confidenceScore} below ${minConfidence}`
         else if (unreliableSignals.length) blockedReason = `Unreliable context signals: ${unreliableSignals.join(', ')}`
+        else if (forecastDrifted) blockedReason = 'Forecast accuracy is in DRIFT; statistical fallback used and auto-staging blocked'
         else if (config?.auto_reorder_max_qty !== null && config?.auto_reorder_max_qty !== undefined &&
                  recommendedQty > Number(config.auto_reorder_max_qty)) {
           blockedReason = `Recommended quantity exceeds auto_reorder_max_qty (${config.auto_reorder_max_qty})`
@@ -234,6 +310,10 @@ Deno.serve(async (req) => {
           data_quality: context.dataQuality,
           reasoning: context.reasoning,
           safety_stock_formula: safety.safetyStockFormula,
+          forecast_source: quantilePlan?.modelVersion ?? 'statistical_fallback',
+          forecast_p50_lead_time: quantilePlan?.p50 ?? null,
+          forecast_p90_lead_time: quantilePlan?.p90 ?? null,
+          forecast_drifted: forecastDrifted,
           lead_time_days: leadTimeDays,
           review_period_days: reviewPeriodDays,
           service_level_pct: serviceLevelPct,

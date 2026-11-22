@@ -32,22 +32,29 @@ This document describes the current behaviour of the replenishment intelligence 
 
 `reorder-engine`, `contextual-sync` and `calculate-velocity` now use `requireAuth` + `resolveTenantScope`. User callers cannot override their tenant through a request body or an unmatched `x-tenant-id` header. Service callers are allowed for scheduled invocation.
 
-## 4. What is still missing (do not overclaim)
+## 4. Forecast layer (phase 2)
 
-- No trained model, no backtesting, no forecast accuracy measurement.
-- No probabilistic P50/P90 demand forecast; safety stock still uses a normal-approximation z-score.
-- No learning of promotion/holiday uplift from actual sales.
+- `demand-forecast` generates **P50 and P90** store-material-day forecasts with a deterministic seasonal-EWMA baseline (`_shared/forecast/baseline-forecaster.ts`), censoring stockout days and applying validated context factors.
+- Each run performs a 14-day **out-of-sample backtest** and records WAPE, bias, P90 coverage and a naive-baseline comparison. A model that does not beat the naive baseline or misses P90 coverage is marked `DRIFT`.
+- `forecast-evaluation` measures **matured** forecasts against actual sales and writes `forecast_accuracy`; `DRIFT` blocks automation.
+- `reorder-engine` uses the quantile forecast **only** when its accuracy is within threshold; otherwise it falls back to the statistical z-score formula and says so in `forecast_source`.
+- Schema: migration `78_demand_forecasting.sql` (`demand_forecasts`, `forecast_accuracy`).
+
+## 5. What is still missing (do not overclaim)
+
+- No trained ML model. The baseline is deliberately transparent and must be beaten by any future model.
+- No learning of promotion/holiday uplift from actual sales; configured uplift values are reused.
 - No ABC/XYZ-driven per-SKU service levels.
 - No auto-replenishment without human approval; this is deliberate.
 
-These are the next phase, not hidden behind the current recommendations. A recommendation from this engine is a **suggestion with evidence**, not an autonomous buyer.
+A recommendation from this engine is a **suggestion with evidence**, not an autonomous buyer.
 
-## 5. Tests
-
-Run the guardrail tests with:
+## 6. Tests
 
 ```bash
-npx -y deno test --no-lock --node-modules-dir=auto supabase/functions/_shared/reorder-engine/reorder-safety.test.ts
+npx -y deno test --no-lock --node-modules-dir=auto \
+  supabase/functions/_shared/reorder-engine/reorder-safety.test.ts \
+  supabase/functions/_shared/forecast/baseline-forecaster.test.ts
 ```
 
-They verify finite safety stock, variability sensitivity, fail-fast validation, neutral handling of missing signals, stale-promotion rejection, and multiplier capping.
+They verify finite safety stock, fail-fast validation, neutral handling of missing signals, stale-promotion rejection, multiplier capping, finite P50/P90 forecasts, stockout censoring, and sparse-history behaviour.
