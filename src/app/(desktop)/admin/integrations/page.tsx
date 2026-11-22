@@ -10,6 +10,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { Activity, AlertTriangle, Database, RefreshCw, Server, Zap } from 'lucide-react';
+import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 
 type Tone = 'good' | 'warn' | 'bad' | 'neutral';
@@ -294,14 +295,22 @@ export default function IntegrationControlTowerPage() {
           </p>
         </div>
 
-        <button
-          onClick={() => void loadTelemetry()}
-          disabled={probing}
-          className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 disabled:opacity-60 text-white text-xs font-bold transition flex items-center gap-2 border border-white/10"
-        >
-          <RefreshCw className={`w-4 h-4 ${probing ? 'animate-spin' : ''}`} />
-          <span>{probing ? 'Probing…' : 'Probe Gateways'}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/admin/integrations/onboarding"
+            className="px-4 py-2 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-100 text-xs font-bold transition flex items-center gap-2 border border-indigo-400/30"
+          >
+            Onboard SAP (Preflight)
+          </Link>
+          <button
+            onClick={() => void loadTelemetry()}
+            disabled={probing}
+            className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 disabled:opacity-60 text-white text-xs font-bold transition flex items-center gap-2 border border-white/10"
+          >
+            <RefreshCw className={`w-4 h-4 ${probing ? 'animate-spin' : ''}`} />
+            <span>{probing ? 'Probing…' : 'Probe Gateways'}</span>
+          </button>
+        </div>
       </div>
 
       {error && (

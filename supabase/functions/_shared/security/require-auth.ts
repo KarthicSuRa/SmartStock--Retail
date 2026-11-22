@@ -26,6 +26,8 @@ export interface AuthContext {
   kind: "user" | "service";
   userId?: string;
   tenantId: string;
+  /** Verified tenant role from app_metadata.live_retail_claims (when enriched). */
+  role?: string;
 }
 
 export type AuthOutcome =
@@ -110,7 +112,10 @@ export async function requireAuth(
       return { ok: false, status: 403, error: TENANT_MISMATCH_ERROR };
     }
 
-    return { ok: true, ctx: { kind: "user", userId: data.user.id, tenantId: verifiedTenant } };
+    const claims = data.user.app_metadata?.live_retail_claims as { role?: string } | undefined;
+    const role = claims?.role ?? (data.user.user_metadata?.role as string | undefined);
+
+    return { ok: true, ctx: { kind: "user", userId: data.user.id, tenantId: verifiedTenant, role } };
   } catch {
     return unauthorized("Unauthorized: token verification failed");
   }
@@ -139,6 +144,25 @@ export function resolveTenantScope(
   }
 
   return { ok: true, tenantId: auth.tenantId };
+}
+
+const ADMIN_ROLES = new Set(["integration_admin", "system_admin", "tenant_admin", "admin"]);
+
+/**
+ * Guard for operations that can change SAP connection configuration.
+ * Fails closed: an unverified or unenriched role is never treated as admin.
+ */
+export function requireAdmin(
+  ctx: AuthContext,
+): { ok: true } | { ok: false; status: 403; error: string } {
+  if (!ctx.role || !ADMIN_ROLES.has(ctx.role)) {
+    return {
+      ok: false,
+      status: 403,
+      error: "Forbidden: an integration/system admin role is required to change SAP connection configuration",
+    };
+  }
+  return { ok: true };
 }
 
 /** Standard 401/403 response body for a failed guard check. */

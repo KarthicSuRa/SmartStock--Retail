@@ -414,6 +414,25 @@ export class SAPAdapter extends BaseERPAdapter {
     return response;
   }
 
+  /**
+   * Read-only escape hatch for preflight discovery. Deliberately exposes no
+   * write path: discovery reuses the existing token, sap-client, CSRF-free
+   * GET handling, timeout, retry and circuit-breaker plumbing.
+   */
+  async rawGet(
+    path: string,
+    opts: { accept?: string; headers?: Record<string, string>; signal?: AbortSignal } = {},
+  ): Promise<Response> {
+    return this.sapRequest(path, {
+      method: 'GET',
+      headers: {
+        ...(opts.accept ? { Accept: opts.accept } : {}),
+        ...(opts.headers ?? {}),
+      },
+      signal: opts.signal,
+    });
+  }
+
   private async readSapError(response: Response): Promise<string> {
     try {
       const text = await response.text();

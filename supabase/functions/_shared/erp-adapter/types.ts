@@ -6,6 +6,7 @@ export interface ERPConfig {
   id: string;
   tenant_id: string;           // Your multi-tenant identifier
   erp_type: 'sap_s4hana' | 'sap_ecc' | 'netsuite' | 'dynamics365' | 'mock';
+  erp_name?: string;
   base_url: string;
   auth_method: 'oauth2' | 'basic' | 'x509' | 'api_key';
   auth_config: SAPAuthConfig | OAuth2Config | BasicAuthConfig;

@@ -342,6 +342,20 @@ The modern adapter does not read `SAP_*` environment variables; it uses the tena
 
 The OData adapter appends `sap-client=<value>` from `auth_config.sap_client` or `metadata.sap_client` to every Gateway request — ordinary reads, CSRF-token fetches, and `$batch` posts. The value is appended only when absent, and the URL is rejected as-is if it already carries a `sap-client`. A Cloud Connector path that fixes the client remains supported; in that case leave the config field empty.
 
+### 6.5 Preflight discovery wizard (`erp-preflight`)
+
+A read-only function, `supabase/functions/erp-preflight/index.ts`, makes onboarding configuration-driven instead of code-driven. It is exposed in the admin UI at `/admin/integrations/onboarding`.
+
+- **Auth:** authenticated human with an `integration_admin` / `system_admin` / `tenant_admin` role; service-role callers are rejected. Tenant scope is taken from the verified JWT claim.
+- **Secrets:** only `auth_config.client_secret_env` (an Edge-secret *name*) is accepted. A body containing an inline `client_secret` or password is rejected with HTTP 422 before any network call. The value is never logged or returned.
+- **Discovery:** for each of the six services, `SAPAdapter.rawGet()` fetches `$metadata` and a one-row sample; a dependency-free EDMX parser (`_shared/erp-adapter/metadata-parser.ts`) detects OData V2 vs V4, resolves `BaseType` inheritance, and extracts entity sets, properties and navigations. CSRF-token issuance is checked for the three write services. All calls are GETs; discovery never posts a document.
+- **Proposals:** `sap_expands`, `sap_field_map` (only unambiguous aliases with a populated sample), plant/storage-location candidates, and an org-unit readiness check. Business values — `plant_map`, company code, purchasing org/group, account assignment, number ranges and posting periods — remain human gates and are never silently applied.
+- **Verdict:** 100-point readiness score plus `READY` / `CONDITIONAL` / `BLOCKED`. A blocker always overrides the score; `UNVERIFIABLE` is never a pass. Posting periods and number ranges are explicitly `UNVERIFIABLE` because the released OData services cannot observe them.
+- **Persistence:** append-only `erp_discovery_runs` (redacted request + full result) and versioned `erp_config_profiles` (draft → reviewed → active → rolled_back). Only the `apply_erp_config_profile` RPC can change the active configuration; it re-checks tenant scope in-function, requires a written confirmation for activation, and refuses a profile whose discovery verdict is `BLOCKED`.
+- **Demo value:** the same metadata parser and proposals can later be fed to a snapshot-backed simulator, so a one-day showcase can run the real discovery payload over captured contracts without a live write.
+
+Run the parser/discovery tests with `npx -y deno test --no-lock --node-modules-dir=auto supabase/functions/_shared/erp-adapter/discovery.test.ts`.
+
 ---
 
 ## 7. End-to-end business flows
