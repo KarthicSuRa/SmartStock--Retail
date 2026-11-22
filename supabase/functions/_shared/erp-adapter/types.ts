@@ -25,7 +25,16 @@ export interface ERPConfig {
 
 export interface SAPAuthConfig {
   client_id: string;
-  client_secret: string;       // Encrypted at rest
+  /**
+   * Prefer `client_secret_env` in production: the adapter resolves the secret
+   * from a Supabase Edge secret (encrypted at rest) at construction time and
+   * never persists it in erp_configurations.
+   */
+  client_secret?: string;
+  /** Name of an Edge secret holding the OAuth client secret. */
+  client_secret_env?: string;
+  /** SAP client (MANDT) when the gateway does not fix it in the URL. */
+  sap_client?: string;
   token_url: string;
   cloud_connector_url?: string; // For on-premise S/4HANA
   certificate_thumbprint?: string;
@@ -114,6 +123,12 @@ export interface InventoryMovement {
   quantity: number;
   uom: string;
   reference_document?: string; // POS transaction ID, PO number, etc.
+  /**
+   * Stable SmartStock identifier written to the SAP material document header
+   * so an OUTCOME_UNKNOWN posting can be resolved by getPostingStatus().
+   * When absent, movement_id is hashed instead.
+   */
+  external_reference?: string;
   reference_date: string;
   posted_by: string;
   erp_document_number?: string; // Filled after sync
@@ -214,6 +229,10 @@ export interface ERPCapabilities {
   purchaseOrderCreate: boolean;
   batchSupported: boolean;
   apiVersions: Record<string, string>;
+  /** Domain movement types this adapter posts without an explicit override. */
+  supportedMovementTypes?: string[];
+  /** Actionable alternative channel for each refused movement type. */
+  unsupportedMovementGuidance?: Record<string, string>;
 }
 
 /** One row of a batched purchase-requisition submission. */

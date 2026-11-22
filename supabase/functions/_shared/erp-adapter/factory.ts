@@ -1,15 +1,45 @@
 // /supabase/functions/_shared/erp-adapter/factory.ts
 
-import { ERPConfig, IERPAdapter } from './types.ts';
+import { ERPConfig, IERPAdapter, SAPAuthConfig } from './types.ts';
 import { SAPAdapter } from './sap-adapter.ts';
 import { MockAdapter } from './mock-adapter.ts';
+import { SapConfigurationError } from './errors.ts';
 
 export class AdapterFactory {
+  /**
+   * Resolves the OAuth secret from an Edge secret when configured. Keeping the
+   * secret out of erp_configurations means a database read cannot expose it and
+   * rotation does not require a row update.
+   */
+  private static resolveSapAuth(config: ERPConfig): ERPConfig {
+    if (config.erp_type !== 'sap_s4hana' && config.erp_type !== 'sap_ecc') return config;
+
+    const auth = config.auth_config as SAPAuthConfig;
+    if (!auth || typeof auth !== 'object') return config;
+
+    if (auth.client_secret_env) {
+      const secret = Deno.env.get(auth.client_secret_env);
+      if (!secret) {
+        throw new SapConfigurationError(
+          `Edge secret '${auth.client_secret_env}' referenced by erp_configurations.auth_config.client_secret_env is not set.`,
+        );
+      }
+      return { ...config, auth_config: { ...auth, client_secret: secret } };
+    }
+
+    if (!auth.client_secret) {
+      throw new SapConfigurationError(
+        'SAP OAuth client secret is not configured. Set auth_config.client_secret_env to the name of a Supabase Edge secret; do not store the plaintext secret in erp_configurations.',
+      );
+    }
+    return config;
+  }
+
   static createAdapter(config: ERPConfig): IERPAdapter {
     switch (config.erp_type) {
       case 'sap_s4hana':
       case 'sap_ecc':
-        return new SAPAdapter(config);
+        return new SAPAdapter(this.resolveSapAuth(config));
       
       case 'mock':
         return new MockAdapter(config);

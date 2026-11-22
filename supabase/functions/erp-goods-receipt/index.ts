@@ -5,6 +5,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { AdapterFactory } from "../_shared/erp-adapter/factory.ts"
 import { GoodsReceiptMatcher } from "../_shared/execution/gr-matcher.ts"
+import { requireAuth, authFailureResponse, resolveTenantScope } from "../_shared/security/require-auth.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -16,14 +17,21 @@ Deno.serve(async (req) => {
     return new Response('ok', { headers: corsHeaders })
   }
 
+  // Inbound GR matching mutates PO/receipt state: never anonymous.
+  const auth = await requireAuth(req, { allowService: true })
+  if (!auth.ok) return authFailureResponse(auth, corsHeaders)
+
   try {
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
+    const scope = resolveTenantScope(auth.ctx, req.headers.get('x-tenant-id'))
+    if (!scope.ok) return authFailureResponse(scope, corsHeaders)
+    const tenantId = scope.tenantId
+
     const payload = await req.json().catch(() => ({}))
-    const tenantId = req.headers.get('x-tenant-id') || payload.tenant_id || 'default-tenant'
     const since = payload.since
 
     const adapter = await AdapterFactory.getAdapterForTenant(tenantId, supabase)

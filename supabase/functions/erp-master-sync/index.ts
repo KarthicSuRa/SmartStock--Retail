@@ -5,6 +5,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { AdapterFactory } from "../_shared/erp-adapter/factory.ts"
 import { SyncOrchestrator, SyncJob } from "../_shared/sync-engine/sync-orchestrator.ts"
+import { requireAuth, authFailureResponse, resolveTenantScope } from "../_shared/security/require-auth.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -16,14 +17,21 @@ Deno.serve(async (req) => {
     return new Response('ok', { headers: corsHeaders })
   }
 
+  // This function mutates master/stock data and calls SAP: never anonymous.
+  const auth = await requireAuth(req, { allowService: true })
+  if (!auth.ok) return authFailureResponse(auth, corsHeaders)
+
   try {
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
+    const scope = resolveTenantScope(auth.ctx, req.headers.get('x-tenant-id'))
+    if (!scope.ok) return authFailureResponse(scope, corsHeaders)
+    const tenantId = scope.tenantId
+
     const requestData = await req.json().catch(() => ({}))
-    const tenantId = req.headers.get('x-tenant-id') || requestData.tenant_id || 'default-tenant'
     const erpConfigId = requestData.erp_config_id
     const mode = requestData.mode || 'delta'
     const entityTypes = requestData.entity_types || ['material_master', 'vendors', 'stock_baselines']

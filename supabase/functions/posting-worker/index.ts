@@ -13,6 +13,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { AdapterFactory } from "../_shared/erp-adapter/factory.ts";
+import { PostingStatusResult } from "../_shared/erp-adapter/types.ts";
 import { isOutcomeUnknown, isNonRetryable } from "../_shared/erp-adapter/errors.ts";
 import { requireAuth, authFailureResponse } from "../_shared/security/require-auth.ts";
 
@@ -177,6 +178,47 @@ Deno.serve(async (req: Request) => {
       } catch (err: any) {
         // ---- "We do not know whether SAP committed" -----------------------
         if (isOutcomeUnknown(err)) {
+          // A deterministic BKTXT was written with the material document, so
+          // probe SAP before quarantining the job. A CONFIRMED probe closes the
+          // job with the number SAP actually returned; NOT_FOUND/FAILED stay
+          // OUTCOME_UNKNOWN and still require a human.
+          const movements = job.payload?.movements ?? [];
+          const firstMovement = movements[0];
+          const reference = firstMovement
+            ? (firstMovement.external_reference ?? firstMovement.reference_document ?? firstMovement.movement_id)
+            : (job.payload?.purchase_order?.po_id ?? job.id);
+
+          let probe: PostingStatusResult | undefined;
+          try {
+            const probeAdapter = await AdapterFactory.getAdapterForTenant(job.tenant_id, supabase);
+            if (!probeAdapter.simulated) probe = await probeAdapter.getPostingStatus(String(reference));
+          } catch (probeErr) {
+            probe = {
+              reference: String(reference),
+              found: false,
+              status: "FAILED",
+              error_message: (probeErr as Error).message,
+            };
+          }
+
+          if (probe?.status === "CONFIRMED" && probe.erp_document_number) {
+            await supabase
+              .from("integration_outbox")
+              .update({
+                status: "COMPLETED",
+                completed_at: new Date().toISOString(),
+                external_document_id: probe.erp_document_number,
+                last_error_details: {
+                  resolved_by: "getPostingStatus",
+                  reference,
+                  original_error: err.message,
+                },
+              })
+              .eq("id", job.id);
+            successCount++;
+            continue;
+          }
+
           await supabase
             .from("integration_outbox")
             .update({
@@ -186,6 +228,7 @@ Deno.serve(async (req: Request) => {
                 error: err.message,
                 attempt: currentAttempt,
                 note: "Not retried automatically: a duplicate post would create a second document.",
+                probe,
                 timestamp: new Date().toISOString(),
               },
             })

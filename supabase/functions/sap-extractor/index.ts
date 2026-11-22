@@ -1,10 +1,10 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
-import { requireAuth, authFailureResponse } from "../_shared/security/require-auth.ts"
+import { requireAuth, authFailureResponse, resolveTenantScope } from "../_shared/security/require-auth.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-tenant-id',
 }
 
 Deno.serve(async (req) => {
@@ -17,6 +17,14 @@ Deno.serve(async (req) => {
   // triggered by anyone who happens to know the URL.
   const auth = await requireAuth(req, { allowService: true })
   if (!auth.ok) return authFailureResponse(auth, corsHeaders)
+
+  // Tenant is resolved from the verified claim only. A request body
+  // `tenant_id` is ignored and an asserted header must match the claim.
+  // This extraction path writes global staging tables, but it must still not
+  // be usable by a caller claiming to act for a different tenant.
+  const scope = resolveTenantScope(auth.ctx, req.headers.get('x-tenant-id'))
+  if (!scope.ok) return authFailureResponse(scope, corsHeaders)
+  const tenantId = scope.tenantId
 
   try {
     // Parse JSON body for POST requests
@@ -64,7 +72,7 @@ Deno.serve(async (req) => {
     const adminClient = createClient(supabaseUrl, supabaseServiceKey)
 
     // Log the initiation process
-    console.log(`[sap-extractor] Initializing SAP OData sync. Target Gateway URL: ${sapBaseUrl || 'MOCK_MODE'}`)
+    console.log(`[sap-extractor] Initializing SAP OData sync for tenant ${tenantId}. Target Gateway URL: ${sapBaseUrl || 'MOCK_MODE'}`)
 
     let infoRecordsResults = []
     let openOrdersResults = []
@@ -287,6 +295,7 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: true,
+        tenant_id: tenantId,
         message: 'SAP S4/HANA master data extraction and staging database synchronisation completed successfully.',
         sync_summary: {
           purchase_info_records_upserted: pirCount,

@@ -53,8 +53,10 @@ export class MockAdapter extends BaseERPAdapter {
         quantity_unrestricted: 150, 
         quantity_in_quality_inspection: 0,
         quantity_blocked: 0,
+        quantity_in_transit: 0,
         atp_quantity: 150, 
-        last_updated: new Date().toISOString() 
+        last_updated: new Date().toISOString(),
+        stock_type: '01',
       }
     ];
   }

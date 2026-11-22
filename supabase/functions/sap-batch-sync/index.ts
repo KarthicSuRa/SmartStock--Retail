@@ -12,6 +12,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { AdapterFactory } from "../_shared/erp-adapter/factory.ts"
 import { InventoryMovement, PurchaseOrder } from "../_shared/erp-adapter/types.ts"
+import { requireAuth, authFailureResponse, resolveTenantScope } from "../_shared/security/require-auth.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -30,18 +31,13 @@ Deno.serve(async (req) => {
     )
   }
 
-  const authHeader = req.headers.get('Authorization')
-  if (!authHeader) {
-    console.warn('[erp-batch-sync] Rejected: Missing Authorization header.')
-    return new Response(
-      JSON.stringify({ error: 'Unauthorized: missing authorization header' }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
-    )
-  }
+  // User-only guard: replaces the previous inline JWT check. Service tokens
+  // are deliberately not accepted for this endpoint (no allowService).
+  const auth = await requireAuth(req)
+  if (!auth.ok) return authFailureResponse(auth, corsHeaders)
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
-    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? ''
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 
     if (!supabaseUrl || !supabaseServiceKey) {
@@ -52,22 +48,13 @@ Deno.serve(async (req) => {
       )
     }
 
-    const userClient = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: authHeader } }
-    })
-
-    const { data: { user }, error: authError } = await userClient.auth.getUser()
-    if (authError || !user) {
-      console.warn('[erp-batch-sync] Authentication failed:', authError?.message)
-      return new Response(
-        JSON.stringify({ error: 'Unauthorized: invalid token' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
-      )
-    }
-
     const requestData = await req.json().catch(() => ({}))
     const executionMode = requestData.execution_mode
-    const tenantId = req.headers.get('x-tenant-id') || requestData.tenant_id || user.user_metadata?.tenant_id || 'default-tenant'
+    // Body `tenant_id` is ignored; only the verified claim may select the
+    // tenant (and a header, if present, must match it).
+    const scope = resolveTenantScope(auth.ctx, req.headers.get('x-tenant-id'))
+    if (!scope.ok) return authFailureResponse(scope, corsHeaders)
+    const tenantId = scope.tenantId
 
     const adminClient = createClient(supabaseUrl, supabaseServiceKey)
     const adapter = await AdapterFactory.getAdapterForTenant(tenantId, adminClient)

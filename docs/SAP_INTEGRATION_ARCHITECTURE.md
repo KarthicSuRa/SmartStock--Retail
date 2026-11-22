@@ -4,7 +4,7 @@
 **Status:** Current implementation (branch `fix/pos-webhook-integration-audit`, commit `9ed0a66`)  
 **Scope:** How SmartStock connects to SAP S/4HANA (and ECC via the same OData V2 contract), what must exist on the SAP side, and how each business task is executed.
 
-> **Grounding rule for this document:** every mechanism described here is taken from the code in `supabase/functions/` and `supabase/migrations/`. Where the implementation is incomplete or unsafe, it is called out explicitly in **§14 Known limitations and risks** rather than presented as finished.
+> **Grounding rule for this document:** every mechanism described here is taken from the code in `supabase/functions/` and `supabase/migrations/`. The audit items that were fixed are recorded in **§14 Previously identified limitations — resolution status**; residual gaps that require SAP-side configuration are called out in §14.5.
 
 ---
 
@@ -267,9 +267,10 @@ SAP's Digital Access / document-based licensing counts business documents create
   "auth_method": "oauth2",
   "auth_config": {
     "client_id": "<communication-user-client-id>",
-    "client_secret": "<secret-from-vault>",
+    "client_secret_env": "SAP_PROD_CLIENT_SECRET",
     "token_url": "https://<ias-or-btp-host>/oauth/token",
-    "scope": "<optional-scope>"
+    "scope": "<optional-scope>",
+    "sap_client": "100"
   },
   "connection_status": "active",
   "company_code": "1000",
@@ -287,6 +288,15 @@ SAP's Digital Access / document-based licensing counts business documents create
       "store-uuid-or-code-1": "1001",
       "store-uuid-or-code-2": "1002",
       "*": "1001"
+    },
+    "sap_expands": {
+      "material": "to_Plant",
+      "vendor": "",
+      "purchaseOrder": ""
+    },
+    "sap_field_map": {
+      "material": { "ean_gtin": "EAN", "shelf_life_days": "ShelfLife" },
+      "vendor": { "min_order_qty": "MinimumOrderQuantity" }
     }
   }
 }
@@ -300,7 +310,9 @@ Notes:
   2. wildcard `plant_map["*"]`;
   3. a 3-digit numeric store ID is accepted as a plant with a warning;
   4. otherwise the write fails with `SapConfigurationError` — no silent default plant.
-- `auth_config` is JSONB. The schema comment says "encrypted at rest"; the adapter reads it as plaintext. Production deployments must use Supabase Vault/secret management or column encryption. See §14.
+- `auth_config.client_secret_env` names a Supabase Edge secret. `AdapterFactory` resolves it at adapter construction; the plaintext secret is never stored in `erp_configurations`. Supplying `client_secret` directly is still accepted for legacy/dev configs, but is discouraged.
+- `metadata.sap_client` (or `auth_config.sap_client`) is appended as `sap-client=<value>` to every Gateway request, including CSRF fetches and `$batch`.
+- `metadata.sap_expands` are opt-in navigation names, validated as identifiers so configuration cannot inject OData syntax. `metadata.sap_field_map` maps SmartStock fields to release-specific SAP field names for material/vendor optional attributes; undeclared fields remain `undefined` rather than guessed.
 
 ### 6.2 Store and plant mapping
 
@@ -328,7 +340,7 @@ The modern adapter does not read `SAP_*` environment variables; it uses the tena
 
 ### 6.4 How `sap-client` is handled
 
-The OData adapter does **not** append `sap-client`. If the target system requires an explicit client, include it in `base_url` (for example `https://host:44300?sap-client=100`) only if your gateway accepts it there, or front the system with a Cloud Connector path that fixes the client. Validate this in the target landscape before go-live.
+The OData adapter appends `sap-client=<value>` from `auth_config.sap_client` or `metadata.sap_client` to every Gateway request — ordinary reads, CSRF-token fetches, and `$batch` posts. The value is appended only when absent, and the URL is rejected as-is if it already carries a `sap-client`. A Cloud Connector path that fixes the client remains supported; in that case leave the config field empty.
 
 ---
 
@@ -338,15 +350,19 @@ The OData adapter does **not** append `sap-client`. If the target system require
 
 Triggered by a scheduler or an authorised operator; entity types default to `material_master`, `vendors`, `stock_baselines`.
 
-1. Resolve tenant and active ERP config.
-2. `adapter.healthCheck()`; if `down`, return 503 and do not start.
-3. `SyncOrchestrator.runSync(job)` for each entity type:
+1. `requireAuth` + `resolveTenantScope`; a user's tenant comes from the verified JWT claim, never from the body or an unmatched `x-tenant-id` header (403 on mismatch).
+2. Resolve tenant and active ERP config.
+3. `adapter.healthCheck()`; if `down`, return 503 and do not start.
+4. `SyncOrchestrator.runSync(job)` for each entity type:
    - `material_master`: `fetchMaterialMaster(since)` → compare → insert/update/conflict-resolve → audit.
    - `vendors`: `fetchVendors()` → same.
-   - `stock_baselines`: read active `erp_store_mappings`, call `fetchStockBaselines(store_id)` per store, compare and upsert.
-4. Delta window comes from `sync_state`; first run falls back to the last 7 days.
-5. Conflicts are resolved by `ConflictResolver` (default `erp_wins`) and written to `sync_audit_log`.
-6. `erp_configurations.connection_status`, `last_sync_at`, and `last_error_message` are updated.
+   - `stock_baselines`: read active `erp_store_mappings`, call `fetchStockBaselines(store_id)` per store with a bounded 5-worker pool, compare and upsert.
+5. All list reads follow `@odata.nextLink`/`d.__next` (max 100 pages) rather than stopping at `$top`; a truncated result is never reported as complete.
+6. Delta window comes from `sync_state`; first run falls back to the last 7 days.
+7. Local rows are bulk-loaded by key set once per entity type, so comparison is no longer one query per ERP record.
+8. A stock row without `erp_plant`, or a non-UUID `tenant_id`, is counted as a failed record with an explicit error — never written with a fabricated plant.
+9. Conflicts are resolved by `ConflictResolver` (default `erp_wins`) and written to `sync_audit_log`.
+10. `erp_configurations.connection_status`, `last_sync_at`, and `last_error_message` are updated.
 
 **Stock baseline semantics (corrected in this branch):**
 
@@ -426,7 +442,7 @@ Supported default mappings:
 6. Records an `execution_batches` row of type `EMERGENCY_PO`.
 7. Returns only the PO number SAP returned; no synthesis.
 
-> Operational note: this function currently does not call `requireAuth`; see §14.
+The function requires an authenticated caller and scopes the staged PR by the verified tenant. Only a PO number actually returned by SAP is recorded; no `SAP-PO-…` fallback is generated.
 
 ### 7.5 Goods receipt ingest — `erp-goods-receipt`
 
@@ -442,14 +458,15 @@ The adapter is deliberately stateless. Reconciliation is a join performed by the
    - `erp_total` = sum of `quantity_unrestricted` (optionally filtered by SKU);
    - per-SKU `discrepancies` with `erp_qty`, and `local_qty = 0` / `diff = 0` placeholders;
    - `local_total = 0` with an explicit comment that the caller must supply it.
-2. The edge function resolves the store reference:
+2. The edge function requires a UUID tenant (422 otherwise) and resolves the store reference before any ERP work:
    - a UUID is treated as `inventory_position.location_id`;
-   - a plant code is resolved through `stores.sap_plant_code → stores.id`.
-3. It reads `inventory_position` for that location (and tenant when the tenant is a UUID), sums `sellable_qty`, and computes:
+   - a plant code is resolved through `stores.sap_plant_code → stores.id`;
+   - an unresolvable `store_id` returns 422 instead of silently skipping the local side and reporting a zero variance.
+3. It reads `inventory_position` for that location, sums `sellable_qty`, and computes:
    - `local_total`, `variance = local_total − erp_total`, `variance_percentage`;
    - fills each discrepancy's `local_qty` and `diff = local_qty − erp_qty`.
-4. If the local read fails, the error is logged and the ERP side is still returned honestly (variance remains 0 only because the local side is absent — the audit log will show the failed read).
-5. Variance above 0.01 is written to `sync_audit_log` as a `CONFLICT` with `conflict_strategy = 'erp_wins'` and a recommendation (physical audit if > 5 %).
+4. `local_side_status` is `ok`, `unavailable`, or `not_scoped`. A failed read is surfaced explicitly; no variance is claimed.
+5. Only a computed variance above 0.01 is written to `sync_audit_log` as a `CONFLICT` with `conflict_strategy = 'erp_wins'` and a recommendation (physical audit if > 5 %).
 
 ### 7.7 Batch posting ledger reconciliation
 
@@ -483,7 +500,7 @@ The adapter is deliberately stateless. Reconciliation is a join performed by the
 | `MaterialMaster.sku` / `erp_material_number` | `A_Product.Product` (`MATNR`) | Trimmed/leading zeros are SAP's responsibility; the adapter sends the value verbatim |
 | `description` | `to_Description.ProductDescription` | First description only |
 | `material_group` | `ProductGroup` (`MATKL`) | |
-| `base_uom` / `sales_uom` | `BaseUnit` | Sales UoM is not expanded; falls back to base UoM |
+| `base_uom` / `sales_uom` | `BaseUnit`, `SalesUnit` | Sales UoM is only read when declared via `metadata.sap_field_map`; otherwise falls back to base UoM |
 | `erp_plant` | `Plant` (`WERKS`) | |
 | `erp_storage_location` | `StorageLocation` (`LGORT`) | Falls back to configured default then `0001` |
 | `quantity_unrestricted` | `to_MatlStkInAcctMod.MatlWrhsStkQtyInMatlBaseUnit` where stock type `01` | |
@@ -494,7 +511,7 @@ The adapter is deliberately stateless. Reconciliation is a join performed by the
 | `InventoryMovement.quantity` | `QuantityInEntryUnit` | Sent as absolute value; direction is encoded by movement type |
 | `InventoryMovement.uom` | `EntryUnit` | No conversion |
 | `reference_date` | `PostingDate` / `DocumentDate` | Formatted `YYYY-MM-DDT00:00:00` |
-| `reference_document` | `MaterialDocumentHeaderText` | Truncated to 25 characters |
+| `external_reference` / `reference_document` / `movement_id` | `MaterialDocumentHeaderText` | Hashed to a deterministic `SS-<hash>-<hint>` string (≤ 25 chars) so `getPostingStatus` can probe SAP |
 | `storage_location` | `StorageLocation` | |
 | `batch` | `Batch` | Optional |
 | `sap_reason_code` | `GoodsMovementReasonCode` | Optional |
@@ -524,6 +541,9 @@ The adapter is deliberately stateless. Reconciliation is a join performed by the
 | Simulated adapter guard | `adapter.simulated` checks in `sap-batch-sync`, `erp-batch-execute` | Mock runs must not look like real SAP activity |
 | Write-once semantics | Writes bypass `withRetry`; only the 403 CSRF refresh is retried | Prevents duplicate metered documents |
 | Outcome-unknown quarantine | `OutcomeUnknownError`, `erp-batch-execute` 409 path | Forces human reconciliation before any re-run |
+| Deterministic posting probe | `SS-<hash>-<hint>` BKTXT + `getPostingStatus()` in `posting-worker` | A CONFIRMED probe closes the outbox job with SAP's own document number; NOT_FOUND/FAILED stay human-owned |
+| Transport-failure honesty | `isTransportFailure()` on PR/PO writes | A dropped HTTP response is reported as outcome-unknown, not `success: false` |
+| Auth + tenant scoping | `requireAuth` + `resolveTenantScope` on every ERP-facing function | A user JWT for tenant A cannot assert tenant B; anonymous callers cannot create SAP documents |
 | Batch cardinality check | Sub-response count must equal requested count | Positional mapping is unsafe if counts differ |
 | Strict movement mapping | `resolveMovement` + validation | A wrongly posted 201 would misstate COGS |
 | STO refusal | `postPurchaseOrder` rejects `po_type = 'UB'` | A plain PO would look like an STO but move no stock |
@@ -626,6 +646,9 @@ Track monthly counts of material documents, PRs, and POs created in SAP against 
 - [ ] Goods-receipt read matches a known material document.
 - [ ] Reconciliation identifies a deliberately introduced variance and logs it.
 - [ ] A forced timeout/5xx leaves the batch in `outcome_unknown` and no auto-retry occurs.
+- [ ] `getPostingStatus()` finds the `SS-<hash>-<hint>` document that was actually posted; `posting-worker` closes the outbox job with SAP's number.
+- [ ] An anonymous call and a cross-tenant `x-tenant-id` are rejected (401/403).
+- [ ] A catalog larger than one OData page is read completely via `@odata.nextLink`.
 - [ ] Digital Access counts match the number of documents created.
 
 ### 13.3 Deployment shape
@@ -637,41 +660,50 @@ Track monthly counts of material documents, PRs, and POs created in SAP against 
 
 ---
 
-## 14. Known limitations and risks
+## 14. Previously identified limitations — resolution status
 
-These are real gaps in the current code, not roadmap wishes. They should be resolved or explicitly accepted before scaling to production.
+All twenty items in the earlier audit have been addressed in code. This section records what changed so reviewers can verify each one; remaining items are external SAP-side dependencies, not application gaps.
 
-### 14.1 Security
+### 14.1 Security — resolved
 
-1. **Missing auth guards.** `erp-master-sync`, `erp-goods-receipt`, `erp-emergency-po`, and `erp-reconciliation` do not call `requireAuth`. `erp-batch-execute`, `sap-batch-sync`, and `sap-extractor` do. Front the unguarded functions with a gateway that enforces JWT/service auth, or add `requireAuth` before exposing them.
-2. **Tenant assertion.** `x-tenant-id` is trusted for tenant selection. A caller with a valid JWT for tenant A could assert tenant B unless the gateway or function validates the claim. Harden by comparing the header with `auth.ctx.tenantId`.
-3. **Secret storage.** `auth_config` is JSONB read as plaintext by the adapter; ensure Vault/column encryption is actually enabled in the deployed environment.
+1. **Auth guards** — `erp-master-sync`, `erp-goods-receipt`, `erp-emergency-po`, and `erp-reconciliation` now call `requireAuth`. `erp-batch-execute`, `sap-batch-sync`, `sap-extractor`, and `posting-worker` were already guarded. Every ERP-facing function rejects anonymous callers.
+2. **Tenant assertion** — user tenants are derived from verified JWT claims (`user_metadata`, then `app_metadata`). `requireAuth` returns 403 when `x-tenant-id` disagrees with the claim, and `resolveTenantScope` prevents a JSON-body `tenant_id` from overriding it. Service callers may assert a tenant via the header.
+3. **Secret storage** — `auth_config.client_secret_env` names a Supabase Edge secret; `AdapterFactory` resolves it at construction and never writes the plaintext back to `erp_configurations`. Legacy inline `client_secret` still works but is discouraged. Rotation is now an Edge-secret operation, not a database update.
 
-### 14.2 Functional
+### 14.2 Functional — resolved
 
-4. **`getPostingStatus` is unimplemented.** There is no deterministic external reference stored on material documents, so an `OUTCOME_UNKNOWN` cannot be auto-resolved. Manual SAP search is required. Recommended fix: write a stable SmartStock reference into `MaterialDocumentHeaderText`/a custom field and implement a probe.
-5. **PO read path returns `[]`.** `fetchPurchaseOrders` is a placeholder; procurement visibility relies on local records or `sap-extractor`. Use `API_PURCHASE_ORDER_SRV` (release-dependent) or a CDS-based read.
-6. **Material master is partial.** Sales/purchasing views, EAN/GTIN, shelf life, rounding value, MOQ, and standard price are not expanded; the adapter does not guess navigation names that vary by release. `sap-extractor` covers purchasing info records separately.
-7. **Vendor master is partial.** `fetchVendors` returns supplier number/name; MOQ, rounding, and contract price come back as 0/default and must come from info records.
-8. **No pagination.** All list reads use `$top=5000` without `$skiptoken`/`$skip`; larger catalogs are truncated. Implement `@odata.nextLink` handling before large-tenant rollout.
-9. **Stock read limit.** `$top=5000` applies to `A_MaterialStock`; a plant with more stock rows will be truncated.
-10. **`sap-client` not appended.** See §6.4; confirm the gateway path/client handling in each landscape.
-11. **Some write errors are collapsed.** `postPurchaseRequisition` and `postPurchaseOrder` catch transport errors and return `{ success: false }` rather than `OutcomeUnknownError`. A timed-out PO may still have been created in SAP. Treat any transport failure on these two paths as outcome-unknown operationally, and consider raising `OutcomeUnknownError` in code.
-12. **`executeBatchPR` has no circuit breaker/backoff wrapper.** It calls `sapRequest` directly; only the CSRF 403 refresh is retried. This is intentional for writes but means transient gateway errors are surfaced immediately.
-13. **Unsupported business movements.** `SALE`, `GOODS_ISSUE`, `ADJUSTMENT`, `COUNT`, `TRANSFER_IN`, and STOs are refused by design. Sales must use the sales/delivery or POS integration; count differences must use `API_PHYSICAL_INVENTORY_DOC_SRV`; STOs require a stock-transport-order API available in your release or a customer-specific process — the adapter deliberately does not downgrade one to a plain PO.
-14. **Reconciliation location mapping.** `inventory_position.location_id` is a UUID while callers often pass a plant code; the edge function now resolves `stores.sap_plant_code → stores.id`, but if no store row exists the local side is skipped (ERP side still returned). Tenant IDs that are not UUIDs are not used to filter the UUID `tenant_id` column.
-15. **Admin integration UI is illustrative.** `src/app/(desktop)/admin/integrations/page.tsx` shows hard-coded gateway health/latency. The authoritative health signal is `adapter.healthCheck()` and `erp_configurations.last_health_check_at`.
+4. **Posting-status probe** — material documents carry a deterministic `SS-<hash>-<hint>` header text derived from `external_reference` / `reference_document` / `movement_id`. `getPostingStatus()` recomputes it and queries `A_MaterialDocumentHeader`; `posting-worker` uses a CONFIRMED result to close an `OUTCOME_UNKNOWN` job with SAP's own document number. NOT_FOUND and FAILED remain human-owned — no auto-retry.
+5. **PO reads** — `fetchPurchaseOrders` now reads `API_PURCHASEORDER_PROCESS_SRV/A_PurchaseOrder` with `to_PurchaseOrderItem`, maps header and item fields, derives status, and supports vendor/plant/since filters (with in-memory fallback when the release cannot filter).
+6. **Material master fields** — sales UoM, EAN/GTIN, shelf life, rounding value, MOQ, standard price, and vendor accounts are read when present. Release-specific navigation and field names are declared in `metadata.sap_expands` / `metadata.sap_field_map`; nothing is guessed.
+7. **Vendor master fields** — currency, MOQ, rounding, and contract net price are read through the same opt-in field map. Info-record-only values stay 0/undefined unless the customer maps them.
+8. **Pagination** — all list reads use a shared `fetchAll()` that follows `d.__next` / `@odata.nextLink`, caps at 100 pages, and refuses to follow a nextLink pointing at a different host.
+9. **Stock read limit** — `A_MaterialStock` reads now page through all results; the previous 5,000-row ceiling is gone. ATP and reconciliation inherit this.
+10. **`sap-client`** — the configured value is appended to every Gateway request, including CSRF fetches and `$batch`.
+11. **Write failures** — transport failures in `postPurchaseRequisition` and `postPurchaseOrder` now raise `OutcomeUnknownError` instead of `{ success: false }`; definite SAP rejections and configuration errors remain non-retryable failures.
+12. **`executeBatchPR`** — checks the circuit breaker before sending, records outcome/failure counters, and converts transport failures to `OutcomeUnknownError`. It still never retries a write.
+13. **Unsupported movements** — remain intentionally refused, but `capabilities()` now advertises `supportedMovementTypes` and `unsupportedMovementGuidance`, and an explicit `sap_movement_type` + `sap_goods_movement_code` override is validated and accepted for customer-specific processes. Sales, count differences, and STOs still need their proper SAP APIs; the adapter never substitutes a plain PO for an STO.
+14. **Reconciliation mapping** — an unresolvable `store_id` returns 422, a non-UUID tenant returns 422, and audit rows use the real active `erp_config_id`. Failed local reads are surfaced through `local_side_status`.
+15. **Admin integration UI** — health cards now read `erp_configurations` (`connection_status`, `last_health_check_at`, `last_sync_at`, `last_error_message`), `pos_feed_health`, and `integration_outbox` counts. Unknown values show "No telemetry available"/"Latency not recorded"; the Probe button re-fetches real data.
 
-### 14.3 Data model
+### 14.3 Data model — resolved
 
-16. **`inventory_position.tenant_id` is UUID** but several callers default to the string `default-tenant`. Ensure real tenant UUIDs are used, or the read-model write path will fail.
-17. **Stock type semantics** were corrected to SAP's `NSDM_LBBSA` domain in this branch (`01` unrestricted, `02` QI, `03` returns, `07` blocked, `10` GR blocked). Any downstream report that assumed the old mapping must be reviewed.
-18. **`stock_baselines` write path defaults plant/storage/UoM.** `SyncOrchestrator.mapToLocalSchema` maps the adapter's `quantity_*` names to the table's `qty_*` columns, but it also applies `erp_plant || '1001'`, `erp_storage_location || '0001'`, and `uom || 'EA'`. The adapter itself never invents a plant; this writer-side fallback can attribute stock to the wrong plant if a mapping is missing. Review before multi-plant rollout. Stock type `06` (in transit) is now reported through `quantity_in_transit`; `04`, `05`, `08`, and `09` remain uncategorised and are returned with zero category quantities plus `stock_type`.
+16. **UUID tenants** — the sync orchestrator and reconciliation reject non-UUID tenants before writing to UUID columns; `default-tenant` can no longer be written into `sync_state`, `stock_baselines`, or `sync_audit_log`.
+17. **Stock-type semantics** — the adapter, types, mock adapter, and this document now consistently use `NSDM_LBBSA` (`01` unrestricted, `02` QI, `03` returns, `06` in transit, `07` blocked, `10` GR blocked). No downstream code referenced the old `02 = blocked` mapping.
+18. **No fabricated plant** — `SyncOrchestrator` no longer defaults `erp_plant`, storage location, or UoM; a stock row without `erp_plant` is counted as a failed record with an explicit error.
 
-### 14.4 Performance and scale
+### 14.4 Performance and scale — resolved
 
-19. **Sequential per-store stock fetch.** `erp-master-sync` loops stores sequentially. For many stores, parallelise with a bounded pool.
-20. **Per-record conflict comparison.** `SyncOrchestrator` performs one query per ERP record; at large catalog sizes this is N+1. Batch by key set.
+19. **Bounded parallelism** — per-store stock fetches use a five-worker pool with deterministic result ordering and per-store error isolation.
+20. **No N+1** — local records are bulk-loaded by key set (chunks of 200) into Maps before comparison; material IDs and the default store are preloaded once.
+
+### 14.5 Residual external dependencies
+
+These need SAP-side configuration or a different SAP API; they are not defects in the integration code:
+
+- `API_PHYSICAL_INVENTORY_DOC_SRV` must be activated if count/adjustment differences are to be posted.
+- Sales and STO flows need their respective sales/stock-transport APIs; the adapter deliberately does not implement them by guessing a document type.
+- MOQ, rounding, and contract price require purchasing info records exposed through `metadata.sap_field_map` or a customer CDS view; supplier master alone does not carry them.
+- Digital Access licensing and authorization objects must still be validated in the target release (§5.4, §5.7).
 
 ---
 
@@ -701,7 +733,7 @@ These are real gaps in the current code, not roadmap wishes. They should be reso
   "PostingDate": "2026-11-22T00:00:00",
   "DocumentDate": "2026-11-22T00:00:00",
   "GoodsMovementCode": "03",
-  "MaterialDocumentHeaderText": "SmartStock SCRAP-12345",
+  "MaterialDocumentHeaderText": "SS-9f2c1a4b-SCRAP12345",
   "to_MaterialDocumentItem": [
     {
       "Material": "10000001",

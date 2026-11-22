@@ -5,6 +5,20 @@ import { DeltaTracker } from './delta-tracker.ts';
 import { ConflictResolver, MergeStrategy } from './conflict-resolver.ts';
 import { SyncAudit } from './sync-audit.ts';
 
+/**
+ * PostgreSQL accepts any 8-4-4-4-12 hex string for a `uuid` column. Anything
+ * else (e.g. the legacy string tenant id "default-tenant") must never be sent
+ * to a UUID `tenant_id` column: it would fail with an opaque Postgres cast
+ * error instead of an actionable message.
+ */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Upper bound on concurrent per-store stock baseline fetches. */
+const STOCK_FETCH_CONCURRENCY = 5;
+
+/** Keeps generated PostgREST `.in()` URLs bounded for large catalogs. */
+const BULK_SELECT_CHUNK = 200;
+
 export interface SyncJob {
   tenantId: string;
   erpConfigId: string;
@@ -95,12 +109,18 @@ export class SyncOrchestrator {
       } catch (error) {
         console.error(`[SyncOrchestrator] Sync failed for ${entityType}:`, error);
         
-        await this.deltaTracker.failSync(
-          job.tenantId,
-          job.erpConfigId,
-          entityType,
-          (error as Error).message
-        );
+        try {
+          await this.deltaTracker.failSync(
+            job.tenantId,
+            job.erpConfigId,
+            entityType,
+            (error as Error).message
+          );
+        } catch (trackingError) {
+          // A non-UUID tenant cannot be written to sync_state either; never let
+          // bookkeeping hide the real sync error.
+          console.warn('[SyncOrchestrator] failSync warning:', (trackingError as Error).message);
+        }
 
         results.push({
           entityType,
@@ -115,6 +135,13 @@ export class SyncOrchestrator {
           errors: [(error as Error).message]
         });
       }
+    }
+
+    // erp_configurations.tenant_id is a UUID column too. Skip the health write
+    // for non-UUID tenants rather than emitting a cryptic Postgres cast error.
+    if (!UUID_PATTERN.test(job.tenantId)) {
+      console.warn(`[SyncOrchestrator] Skipping ERP health update for non-UUID tenantId "${job.tenantId}"`);
+      return results;
     }
 
     await this.updateERPHealth(job.tenantId, job.erpConfigId, results);
@@ -143,13 +170,48 @@ export class SyncOrchestrator {
           .select('store_id, erp_plant')
           .eq('erp_config_id', erpConfigId)
           .eq('is_active', true);
-        
-        const allBaselines: StockBaseline[] = [];
-        for (const store of stores || []) {
-          const baselines = await this.adapter.fetchStockBaselines(store.store_id);
-          allBaselines.push(...baselines);
+
+        const mappedStores = stores || [];
+        if (mappedStores.length === 0) return [];
+
+        // Bounded parallelism: at most STOCK_FETCH_CONCURRENCY stores are in
+        // flight at once. Results are written back by store index, so the
+        // concatenated order is identical to the original sequential loop.
+        const baselinesByStore: StockBaseline[][] = Array.from(
+          { length: mappedStores.length },
+          () => [] as StockBaseline[]
+        );
+        const storeFailures: string[] = [];
+        let nextStore = 0;
+
+        const worker = async (): Promise<void> => {
+          while (true) {
+            const index = nextStore++;
+            if (index >= mappedStores.length) return;
+
+            const store = mappedStores[index];
+            try {
+              baselinesByStore[index] = await this.adapter.fetchStockBaselines(store.store_id);
+            } catch (error) {
+              // Isolate the failure: the remaining stores keep being fetched.
+              storeFailures.push(`store ${store.store_id}: ${(error as Error).message}`);
+              baselinesByStore[index] = [];
+            }
+          }
+        };
+
+        const workerCount = Math.min(STOCK_FETCH_CONCURRENCY, mappedStores.length);
+        await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+        if (storeFailures.length > 0) {
+          // Preserve the fail-closed semantics of the old sequential loop, but
+          // only after every other store has been attempted.
+          throw new Error(
+            `Stock baseline fetch failed for ${storeFailures.length} of ${mappedStores.length} store(s): ${storeFailures.join('; ')}`
+          );
         }
-        return allBaselines;
+
+        return baselinesByStore.flat();
       }
       
       case 'purchase_orders':
@@ -168,13 +230,16 @@ export class SyncOrchestrator {
     entityType: string,
     erpRecords: any[]
   ): Promise<ComparisonResult> {
+    // One bulk read (per related table) instead of one query per ERP record.
+    const lookup = await this.buildLookupContext(tenantId, erpConfigId, entityType, erpRecords);
+
     const toInsert: any[] = [];
     const toUpdate: any[] = [];
     const unchanged: any[] = [];
     const conflicts: Array<{ local: any; erp: any; reason: string }> = [];
 
     for (const erpRecord of erpRecords) {
-      const localRecord = await this.findLocalRecord(tenantId, erpConfigId, entityType, erpRecord);
+      const localRecord = lookup.localByKey.get(this.localRecordKey(entityType, erpRecord)) || null;
 
       if (!localRecord) {
         toInsert.push(erpRecord);
@@ -197,56 +262,145 @@ export class SyncOrchestrator {
       toUpdate.push({ local: localRecord, erp: erpRecord, diff: diff.fields });
     }
 
-    return { toInsert, toUpdate, unchanged, conflicts };
+    return { toInsert, toUpdate, unchanged, conflicts, lookup };
   }
 
-  private async findLocalRecord(
+  /**
+   * Loads local rows in bulk and indexes them by the exact key the former
+   * per-record `findLocalRecord()` lookup used, so insert/update/conflict
+   * decisions are unchanged.
+   */
+  private async buildLookupContext(
     tenantId: string,
     erpConfigId: string,
     entityType: string,
-    erpRecord: any
-  ): Promise<any | null> {
-    let query;
-    
+    erpRecords: any[]
+  ): Promise<LookupContext> {
+    const lookup: LookupContext = {
+      localByKey: new Map<string, any>(),
+      materialIdBySku: new Map<string, string>(),
+      defaultStoreId: undefined
+    };
+
     switch (entityType) {
-      case 'material_master':
-        query = this.supabase
-          .from('material_master')
-          .select('*')
-          .eq('tenant_id', tenantId)
-          .eq('erp_config_id', erpConfigId)
-          .eq('sku', erpRecord.sku)
-          .maybeSingle();
+      case 'material_master': {
+        const rows = await this.bulkSelectByKeys(
+          'material_master', tenantId, erpConfigId, 'sku', erpRecords.map(r => r.sku)
+        );
+        for (const row of rows) {
+          const key = this.localRecordKey(entityType, row);
+          if (!lookup.localByKey.has(key)) lookup.localByKey.set(key, row);
+          if (row.sku != null && !lookup.materialIdBySku.has(String(row.sku))) {
+            lookup.materialIdBySku.set(String(row.sku), row.id);
+          }
+        }
         break;
-      
-      case 'vendors':
-        query = this.supabase
-          .from('vendor_master')
-          .select('*')
-          .eq('tenant_id', tenantId)
-          .eq('erp_config_id', erpConfigId)
-          .eq('vendor_code', erpRecord.vendor_code)
-          .maybeSingle();
+      }
+
+      case 'vendors': {
+        const rows = await this.bulkSelectByKeys(
+          'vendor_master', tenantId, erpConfigId, 'vendor_code', erpRecords.map(r => r.vendor_code)
+        );
+        for (const row of rows) {
+          const key = this.localRecordKey(entityType, row);
+          if (!lookup.localByKey.has(key)) lookup.localByKey.set(key, row);
+        }
         break;
-      
-      case 'stock_baselines':
-        query = this.supabase
-          .from('stock_baselines')
-          .select('*')
+      }
+
+      case 'stock_baselines': {
+        const baselines = await this.bulkSelectByKeys(
+          'stock_baselines', tenantId, erpConfigId, 'erp_plant', erpRecords.map(r => r.erp_plant)
+        );
+        for (const row of baselines) {
+          const key = this.localRecordKey(entityType, row);
+          if (!lookup.localByKey.has(key)) lookup.localByKey.set(key, row);
+        }
+
+        // Material ids were resolved with one query per ERP row before; now a
+        // single key-scoped read serves the whole batch.
+        const materials = await this.bulkSelectByKeys(
+          'material_master', tenantId, erpConfigId, 'sku', erpRecords.map(r => r.sku)
+        );
+        for (const row of materials) {
+          if (row.sku != null && !lookup.materialIdBySku.has(String(row.sku))) {
+            lookup.materialIdBySku.set(String(row.sku), row.id);
+          }
+        }
+
+        // The old code selected the first store once per ERP record. One read
+        // for the whole sync is enough.
+        const { data: store } = await this.supabase
+          .from('stores')
+          .select('id')
           .eq('tenant_id', tenantId)
-          .eq('erp_config_id', erpConfigId)
-          .eq('erp_plant', erpRecord.erp_plant)
-          .eq('erp_storage_location', erpRecord.erp_storage_location)
+          .limit(1)
           .maybeSingle();
+        lookup.defaultStoreId = store?.id;
         break;
-      
+      }
+
       default:
-        return null;
+        // Unknown entity types were never matched locally before either.
+        break;
     }
 
-    const { data, error } = await query;
-    if (error) console.warn('[SyncOrchestrator] findLocalRecord warning:', error.message);
-    return data;
+    return lookup;
+  }
+
+  private async bulkSelectByKeys(
+    table: string,
+    tenantId: string,
+    erpConfigId: string,
+    column: string,
+    keys: any[]
+  ): Promise<any[]> {
+    const uniqueKeys = [...new Set(
+      keys.filter(k => k !== undefined && k !== null && k !== '').map(String)
+    )];
+    if (uniqueKeys.length === 0) return [];
+
+    const rows: any[] = [];
+    for (let i = 0; i < uniqueKeys.length; i += BULK_SELECT_CHUNK) {
+      const chunk = uniqueKeys.slice(i, i + BULK_SELECT_CHUNK);
+      const { data, error } = await this.supabase
+        .from(table)
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .eq('erp_config_id', erpConfigId)
+        .in(column, chunk);
+
+      if (error) {
+        console.warn(`[SyncOrchestrator] bulk select from ${table} warning:`, error.message);
+        continue;
+      }
+      if (data) rows.push(...data);
+    }
+    return rows;
+  }
+
+  /** The key used by the former per-record findLocalRecord() lookup. */
+  private localRecordKey(entityType: string, record: any): string {
+    switch (entityType) {
+      case 'material_master':
+        return `sku:${record.sku}`;
+      case 'vendors':
+        return `vendor:${record.vendor_code}`;
+      case 'stock_baselines':
+        return `plant:${record.erp_plant}|loc:${record.erp_storage_location}`;
+      default:
+        return '';
+    }
+  }
+
+  /** Fail closed instead of sending a non-UUID value to a UUID tenant_id column. */
+  private assertUuidTenant(tenantId: string, entityType: string): void {
+    const table = this.getTableName(entityType);
+    if (!UUID_PATTERN.test(tenantId)) {
+      throw new Error(
+        `Refusing to write ${table}: tenant_id is a UUID column but tenantId "${tenantId}" is not a valid UUID`
+      );
+    }
   }
 
   private computeDiff(entityType: string, local: any, erp: any): { hasChanges: boolean; fields: Record<string, { old: any; new: any }> } {
@@ -318,7 +472,7 @@ export class SyncOrchestrator {
     // 1. Handle Inserts
     for (const record of comparison.toInsert) {
       try {
-        await this.insertRecord(job.tenantId, job.erpConfigId, entityType, record);
+        await this.insertRecord(job.tenantId, job.erpConfigId, entityType, record, comparison.lookup);
         inserted++;
         await this.audit.log(job.tenantId, job.erpConfigId, entityType, null, record.sku || record.vendor_code || record.erp_plant, 'INSERT', null, record, job.triggeredBy, job.userId);
       } catch (error) {
@@ -348,15 +502,23 @@ export class SyncOrchestrator {
     return { inserted, updated, failed, unchanged: comparison.unchanged.length, errorMessages };
   }
 
-  private async insertRecord(tenantId: string, erpConfigId: string, entityType: string, record: any) {
+  private async insertRecord(
+    tenantId: string,
+    erpConfigId: string,
+    entityType: string,
+    record: any,
+    lookup: LookupContext
+  ) {
+    this.assertUuidTenant(tenantId, entityType);
     const table = this.getTableName(entityType);
-    const mapped = await this.mapERPToLocal(entityType, record, tenantId, erpConfigId);
+    const mapped = await this.mapERPToLocal(entityType, record, tenantId, erpConfigId, lookup);
     
     const { error } = await this.supabase.from(table).insert(mapped);
     if (error) throw error;
   }
 
   private async updateRecord(tenantId: string, erpConfigId: string, entityType: string, id: string, updates: any) {
+    this.assertUuidTenant(tenantId, entityType);
     const table = this.getTableName(entityType);
     
     const { error } = await this.supabase
@@ -381,7 +543,13 @@ export class SyncOrchestrator {
     return map[entityType] || entityType;
   }
 
-  private async mapERPToLocal(entityType: string, erp: any, tenantId: string, erpConfigId: string): Promise<any> {
+  private async mapERPToLocal(
+    entityType: string,
+    erp: any,
+    tenantId: string,
+    erpConfigId: string,
+    lookup: LookupContext
+  ): Promise<any> {
     const now = new Date().toISOString();
     
     switch (entityType) {
@@ -418,29 +586,21 @@ export class SyncOrchestrator {
         };
 
       case 'stock_baselines': {
-        // Resolve material_id by matching SKU in material_master
-        let materialId = erp.material_id;
-        if (!materialId) {
-          const { data: mat } = await this.supabase
-            .from('material_master')
-            .select('id')
-            .eq('tenant_id', tenantId)
-            .eq('sku', erp.sku)
-            .maybeSingle();
-          
-          materialId = mat?.id;
+        // A missing plant must fail the row, never be fabricated. Attributing
+        // stock to a made-up plant is worse than dropping the record.
+        if (!erp.erp_plant) {
+          throw new Error(
+            `ERP record for SKU "${erp.sku}" (store ${erp.store_id}) has no erp_plant; refusing to fabricate a plant`
+          );
         }
 
-        // Resolve store_id if needed
+        // Resolve material_id / store_id from the maps built once per sync,
+        // instead of issuing one query per ERP record.
+        const materialId = erp.material_id || lookup.materialIdBySku.get(String(erp.sku));
+
         let storeId = erp.store_id;
-        if (!storeId || storeId.length < 30) { // Not UUID
-          const { data: st } = await this.supabase
-            .from('stores')
-            .select('id')
-            .eq('tenant_id', tenantId)
-            .limit(1)
-            .maybeSingle();
-          storeId = st?.id;
+        if (!storeId || String(storeId).length < 30) { // Not a UUID
+          storeId = lookup.defaultStoreId;
         }
 
         return {
@@ -448,13 +608,13 @@ export class SyncOrchestrator {
           store_id: storeId,
           erp_config_id: erpConfigId,
           material_id: materialId,
-          erp_plant: erp.erp_plant || '1001',
-          erp_storage_location: erp.erp_storage_location || '0001',
+          erp_plant: erp.erp_plant,
+          erp_storage_location: erp.erp_storage_location,
           qty_unrestricted: erp.quantity_unrestricted || 0,
           qty_in_quality_inspection: erp.quantity_in_quality_inspection || 0,
           qty_blocked: erp.quantity_blocked || 0,
           qty_in_transit: erp.quantity_in_transit || 0,
-          uom: erp.uom || 'EA',
+          uom: erp.uom,
           last_synced_at: now,
           erp_last_changed_at: erp.last_updated || now
         };
@@ -486,9 +646,19 @@ export class SyncOrchestrator {
   }
 }
 
+interface LookupContext {
+  /** Existing local rows keyed by the former per-record lookup key. */
+  localByKey: Map<string, any>;
+  /** material_master.id by sku, for stock baseline material resolution. */
+  materialIdBySku: Map<string, string>;
+  /** First store for the tenant, for stock rows without a valid store id. */
+  defaultStoreId?: string;
+}
+
 interface ComparisonResult {
   toInsert: any[];
   toUpdate: any[];
   unchanged: any[];
   conflicts: Array<{ local: any; erp: any; reason: string }>;
+  lookup: LookupContext;
 }

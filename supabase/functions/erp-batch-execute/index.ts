@@ -18,7 +18,7 @@ import { IdempotencyStore } from "../_shared/execution/idempotency-store.ts"
 import { DeadLetterQueue } from "../_shared/execution/dead-letter-queue.ts"
 import { BatchExecutor } from "../_shared/execution/batch-executor.ts"
 import { isOutcomeUnknown } from "../_shared/erp-adapter/errors.ts"
-import { requireAuth, authFailureResponse } from "../_shared/security/require-auth.ts"
+import { requireAuth, authFailureResponse, resolveTenantScope } from "../_shared/security/require-auth.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -41,8 +41,13 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
+    // Tenant comes only from the verified auth scope. A request body
+    // `tenant_id` is ignored, and an asserted header must match the claim.
+    const scope = resolveTenantScope(auth.ctx, req.headers.get('x-tenant-id'))
+    if (!scope.ok) return authFailureResponse(scope, corsHeaders)
+    const tenantId = scope.tenantId
+
     const payload = await req.json().catch(() => ({}))
-    const tenantId = req.headers.get('x-tenant-id') || payload.tenant_id || auth.ctx.tenantId
     const erpConfigId = payload.erp_config_id
     const dryRun = payload.dry_run === true
 

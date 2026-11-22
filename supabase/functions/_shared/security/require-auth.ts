@@ -14,6 +14,11 @@
 // this guard: an unauthenticated write endpoint lets anyone create SAP business
 // documents, which is both a fraud vector and an uncontrolled Digital Access
 // consumption vector.
+//
+// Tenant selection rule: a user's tenant comes from the *verified* JWT claims
+// (user_metadata, then app_metadata). The `x-tenant-id` header is never a
+// source of truth for a user; it is only accepted when it matches the verified
+// claim. Service callers may assert any tenant via that header.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -33,6 +38,8 @@ export interface RequireAuthOptions {
   /** Default tenant when the caller does not assert one. */
   defaultTenantId?: string;
 }
+
+const TENANT_MISMATCH_ERROR = "Forbidden: x-tenant-id does not match the authenticated tenant";
 
 function unauthorized(error: string): AuthOutcome {
   return { ok: false, status: 401, error };
@@ -65,6 +72,7 @@ export async function requireAuth(
       (internalToken.length > 0 && token === internalToken);
 
     if (isService) {
+      // Service callers are trusted to assert the tenant they operate on.
       return {
         ok: true,
         ctx: { kind: "service", tenantId: assertedTenant ?? defaultTenantId },
@@ -90,18 +98,50 @@ export async function requireAuth(
       return unauthorized("Unauthorized: invalid or expired token");
     }
 
-    const tenantId =
-      assertedTenant ??
+    // The verified claim is the only source of truth for a user's tenant.
+    // `default-tenant` is used solely when the JWT carries no tenant claim.
+    const verifiedTenant =
       (data.user.user_metadata?.tenant_id as string | undefined) ??
+      (data.user.app_metadata?.tenant_id as string | undefined) ??
       defaultTenantId;
 
-    return { ok: true, ctx: { kind: "user", userId: data.user.id, tenantId } };
+    // Defense in depth: a JWT for tenant A cannot assert tenant B via header.
+    if (assertedTenant && assertedTenant !== verifiedTenant) {
+      return { ok: false, status: 403, error: TENANT_MISMATCH_ERROR };
+    }
+
+    return { ok: true, ctx: { kind: "user", userId: data.user.id, tenantId: verifiedTenant } };
   } catch {
     return unauthorized("Unauthorized: token verification failed");
   }
 }
 
-/** Standard 401 response body for a failed guard check. */
+/**
+ * Resolve the tenant an authenticated caller is allowed to operate on.
+ *
+ * Callers must pass only the asserted transport value (e.g. `x-tenant-id`).
+ * Request-body `tenant_id` values are never passed here: for user callers the
+ * body is ignored, and a service caller's asserted tenant is supplied via the
+ * header. This prevents a body field from bypassing the verified claim check.
+ */
+export function resolveTenantScope(
+  auth: AuthContext,
+  assertedTenant?: string | null,
+): { ok: true; tenantId: string } | { ok: false; status: 403; error: string } {
+  const asserted = assertedTenant?.trim() || undefined;
+
+  if (auth.kind === "service") {
+    return { ok: true, tenantId: asserted ?? auth.tenantId };
+  }
+
+  if (asserted && asserted !== auth.tenantId) {
+    return { ok: false, status: 403, error: TENANT_MISMATCH_ERROR };
+  }
+
+  return { ok: true, tenantId: auth.tenantId };
+}
+
+/** Standard 401/403 response body for a failed guard check. */
 export function authFailureResponse(
   outcome: Extract<AuthOutcome, { ok: false }>,
   corsHeaders: Record<string, string>,

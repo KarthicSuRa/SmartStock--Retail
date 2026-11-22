@@ -52,9 +52,11 @@ import {
   ERPConfig, SAPAuthConfig, MaterialMaster, StockBaseline,
   InventoryMovement, PurchaseRequisition, PurchaseOrder, BatchResult,
   ReconciliationResult, GoodsReceipt, VendorInfo, POFilter, PostingStatusResult,
+  POItem, ERPCapabilities,
 } from './types.ts';
 import {
   NonRetryableError, OutcomeUnknownError, SapConfigurationError,
+  isNonRetryable, isTransportFailure,
 } from './errors.ts';
 
 // ==================== SERVICE PATHS (verified) ====================
@@ -90,6 +92,34 @@ function newBoundary(prefix: string): string {
 
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).length;
+}
+
+/** First defined, non-null value from a list of release-dependent SAP fields. */
+function firstDefined<T>(...values: Array<T | undefined | null>): T | undefined {
+  return values.find((v): v is T => v !== undefined && v !== null && v !== '');
+}
+
+function asNumber(value: unknown, fallback = 0): number {
+  const n = typeof value === 'number' ? value : parseFloat(String(value ?? ''));
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * Deterministic, 25-character-safe material-document header reference.
+ *
+ * The hash makes a probe possible without a custom field: the same SmartStock
+ * reference always produces the same BKTXT. The readable suffix is only a hint
+ * for operators; the whole string is what getPostingStatus matches on.
+ */
+function toPostingReference(reference: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < reference.length; i++) {
+    hash ^= reference.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const hex = (hash >>> 0).toString(16).padStart(8, '0');
+  const readable = reference.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 12);
+  return `SS-${hex}-${readable}`.slice(0, 25);
 }
 
 /** Extracts `name=value` pairs from Set-Cookie headers (multi-header safe). */
@@ -164,6 +194,75 @@ export class SAPAdapter extends BaseERPAdapter {
     this.authConfig = config.auth_config as SAPAuthConfig;
   }
 
+  // ==================== REQUEST PLUMBING ====================
+
+  /** SAP client (MANDT) from auth_config, or metadata.sap_client. */
+  private get sapClient(): string | undefined {
+    const metadata = (this.config.metadata ?? {}) as Record<string, unknown>;
+    return this.authConfig.sap_client || (metadata.sap_client as string | undefined);
+  }
+
+  private withSapClient(endpoint: string): string {
+    const client = this.sapClient;
+    if (!client || /[?&]sap-client=/.test(endpoint)) return endpoint;
+    return `${endpoint}${endpoint.includes('?') ? '&' : '?'}sap-client=${encodeURIComponent(client)}`;
+  }
+
+  /** Optional extra $expand targets for customer-specific releases. */
+  private extraExpands(entity: 'material' | 'vendor' | 'purchaseOrder'): string {
+    const metadata = (this.config.metadata ?? {}) as Record<string, any>;
+    const configured = metadata.sap_expands?.[entity];
+    if (typeof configured !== 'string') return '';
+    // Never let configuration inject OData syntax: only navigation names.
+    return configured
+      .split(',')
+      .map((part) => part.trim())
+      .filter((part) => /^[A-Za-z][A-Za-z0-9_]*$/.test(part))
+      .join(',');
+  }
+
+  /**
+   * Reads every OData V2 page. SAP signals more data with `d.__next` (or the
+   * v4-style `@odata.nextLink` on some Gateway versions); a bare $top would
+   * silently truncate larger plants and catalogs.
+   */
+  private async fetchAll<T = any>(endpoint: string, context: string): Promise<T[]> {
+    const rows: T[] = [];
+    let next: string | undefined = endpoint;
+    let pages = 0;
+    const maxPages = 100;
+
+    while (next) {
+      if (++pages > maxPages) {
+        throw new NonRetryableError(
+          `${context}: exceeded ${maxPages} OData pages. Configure a narrower filter; refusing to return a truncated result as complete.`,
+        );
+      }
+      const response = await this.sapRequest(this.withSapClient(next));
+      if (!response.ok) throw new Error(`${context} failed: HTTP ${response.status}`);
+      const data = await response.json();
+      rows.push(...((data?.d?.results ?? []) as T[]));
+
+      const link = data?.d?.__next ?? data?.d?.['@odata.nextLink'];
+      if (!link) break;
+      if (/^https?:\/\//i.test(link)) {
+        const base = new URL(this.config.base_url);
+        const target = new URL(link);
+        if (target.origin !== base.origin) {
+          throw new NonRetryableError(`${context}: nextLink points to a different host; refusing to follow it.`);
+        }
+        next = link.slice(target.origin.length);
+      } else {
+        next = link;
+      }
+    }
+    return rows;
+  }
+
+  private postingReference(reference: string): string {
+    return reference.startsWith('SS-') ? reference.slice(0, 25) : toPostingReference(reference);
+  }
+
   // ==================== AUTHENTICATION ====================
 
   async connect(): Promise<{ success: boolean; message: string }> {
@@ -192,11 +291,22 @@ export class SAPAdapter extends BaseERPAdapter {
       throw new SapConfigurationError('SAP auth_config.token_url is not configured.');
     }
 
+    // The factory normally resolves client_secret_env; this also covers direct
+    // construction of SAPAdapter (unit tests, custom callers).
+    const clientSecret = this.authConfig.client_secret_env
+      ? Deno.env.get(this.authConfig.client_secret_env)
+      : this.authConfig.client_secret;
+    if (!this.authConfig.client_id || !clientSecret) {
+      throw new SapConfigurationError(
+        'SAP OAuth credentials are incomplete. Set auth_config.client_secret_env to an Edge secret instead of storing the secret in erp_configurations.',
+      );
+    }
+
     const response = await fetch(tokenUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        'Authorization': `Basic ${btoa(`${this.authConfig.client_id}:${this.authConfig.client_secret}`)}`,
+        'Authorization': `Basic ${btoa(`${this.authConfig.client_id}:${clientSecret}`)}`,
       },
       body: new URLSearchParams(
         this.authConfig.scope
@@ -234,7 +344,7 @@ export class SAPAdapter extends BaseERPAdapter {
     }
 
     const token = await this.getAccessToken();
-    const response = await fetch(`${this.config.base_url}${serviceRoot}/`, {
+    const response = await fetch(`${this.config.base_url}${this.withSapClient(`${serviceRoot}/`)}`, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${token}`,
@@ -284,7 +394,7 @@ export class SAPAdapter extends BaseERPAdapter {
         headers['X-CSRF-Token'] = csrf.token;
         if (csrf.cookie) headers['Cookie'] = csrf.cookie;
       }
-      return fetch(`${this.config.base_url}${endpoint}`, {
+      return fetch(`${this.config.base_url}${this.withSapClient(endpoint)}`, {
         ...options,
         headers: { ...headers, ...(options.headers as Record<string, string> | undefined) },
       });
@@ -318,36 +428,66 @@ export class SAPAdapter extends BaseERPAdapter {
 
   async fetchMaterialMaster(since?: string): Promise<MaterialMaster[]> {
     return this.withRetry(async () => {
-      const filter = since
-        ? `&$filter=${encodeURIComponent(`LastChangeDateTime ge datetimeoffset'${since}'`)}`
-        : '';
-      const response = await this.sapRequest(
-        `${SVC_PRODUCT}/A_Product?$expand=to_Description&$top=5000${filter}`,
+      const extra = this.extraExpands('material');
+      const params = [`$expand=to_Description${extra ? `,${extra}` : ''}`];
+      if (since) {
+        params.push(`$filter=${encodeURIComponent(`LastChangeDateTime ge datetimeoffset'${since}'`)}`);
+      }
+      const rows = await this.fetchAll<any>(
+        `${SVC_PRODUCT}/A_Product?${params.join('&')}`,
+        'fetchMaterialMaster',
       );
-
-      if (!response.ok) throw new Error(`Failed to fetch materials: ${response.status}`);
-      const data = await response.json();
-      return (data.d?.results ?? []).map((mat: any) => this.mapSAPMaterialToStandard(mat));
+      return rows.map((mat) => this.mapSAPMaterialToStandard(mat));
     }, 'fetchMaterialMaster');
   }
 
+  /**
+   * Maps the released product header plus any release-specific fields the
+   * customer has declared in erp_configurations.metadata.sap_field_map.material.
+   * Navigation names are never guessed: an undeclared field stays undefined.
+   */
   private mapSAPMaterialToStandard(sapMat: any): MaterialMaster {
+    const description = sapMat.to_Description?.results?.[0] ?? {};
+    const fieldMap = ((this.config.metadata as any)?.sap_field_map?.material ?? {}) as Record<string, string>;
+
+    const pick = (field: string, ...defaults: string[]): unknown => {
+      const candidates = [fieldMap[field], ...defaults].filter(Boolean) as string[];
+      for (const key of candidates) {
+        const value = firstDefined(sapMat[key], description[key]);
+        if (value !== undefined) return value;
+      }
+      return undefined;
+    };
+    const optionalNumber = (field: string, ...defaults: string[]): number | undefined => {
+      const raw = pick(field, ...defaults);
+      if (raw === undefined) return undefined;
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    };
+
+    const vendorAccounts = (sapMat.to_Supplier?.results ?? []).map((v: any) => ({
+      vendor_code: v.Supplier ?? '',
+      vendor_name: v.SupplierName ?? v.Supplier ?? '',
+      currency: v.Currency ?? this.rawDefaults().currencyCode ?? 'EUR',
+      min_order_qty: 0,
+      rounding_value: 0,
+      is_primary: false,
+    }));
+
     return {
       sku: sapMat.Product,
       erp_material_number: sapMat.Product,
-      description: sapMat.to_Description?.results?.[0]?.ProductDescription || '',
+      description: description.ProductDescription || '',
       material_group: sapMat.ProductGroup || '',
       base_uom: sapMat.BaseUnit || '',
-      // Sales / purchasing views require additional $expand targets whose exact
-      // navigation names vary by release; they are intentionally not guessed.
-      sales_uom: sapMat.BaseUnit || '',
-      ean_gtin: undefined,
+      sales_uom: String(pick('sales_uom', 'SalesUnit') ?? sapMat.BaseUnit ?? ''),
+      ean_gtin: pick('ean_gtin', 'EAN', 'GTIN') as string | undefined,
       is_active: sapMat.IsMarkedForDeletion !== 'X',
-      vendor_accounts: [],
-      shelf_life_days: undefined,
-      rounding_value: undefined,
-      min_order_qty: undefined,
-      standard_price: undefined,
+      vendor_accounts: vendorAccounts,
+      shelf_life_days: optionalNumber('shelf_life_days', 'ShelfLife', 'MinimumShelfLife'),
+      rounding_value: optionalNumber('rounding_value', 'RoundingValue', 'BaseQuantity'),
+      min_order_qty: optionalNumber('min_order_qty', 'MinOrderQuantity', 'MinimumOrderQuantity'),
+      standard_price: optionalNumber('standard_price', 'StandardPrice', 'MovingAveragePrice'),
     };
   }
 
@@ -360,15 +500,12 @@ export class SAPAdapter extends BaseERPAdapter {
       //   07 Blocked Stock      08 Restricted-Use   10 GR Blocked Stock
       // The quantities live on the navigation property, so it must be expanded.
       const filter = encodeURIComponent(`Plant eq '${plant}'`);
-      const response = await this.sapRequest(
-        `${SVC_MATERIAL_STOCK}/A_MaterialStock?$filter=${filter}` +
-        `&$expand=to_MatlStkInAcctMod&$top=5000`,
+      const rows = await this.fetchAll<any>(
+        `${SVC_MATERIAL_STOCK}/A_MaterialStock?$filter=${filter}&$expand=to_MatlStkInAcctMod`,
+        'fetchStockBaselines',
       );
 
-      if (!response.ok) throw new Error(`Failed to fetch stock: ${response.status}`);
-      const data = await response.json();
-
-      return (data.d?.results ?? []).map((stock: any) => {
+      return rows.map((stock: any) => {
         const stockType = stock.InventoryStockType ?? '01';
         const qty = this.readStockQuantity(stock.to_MatlStkInAcctMod);
         return {
@@ -402,24 +539,42 @@ export class SAPAdapter extends BaseERPAdapter {
 
   async fetchVendors(): Promise<VendorInfo[]> {
     return this.withRetry(async () => {
-      const response = await this.sapRequest(
-        `${SVC_BUSINESS_PARTNER}/A_Supplier?$select=Supplier,SupplierName&$top=5000`,
+      const extra = this.extraExpands('vendor');
+      const rows = await this.fetchAll<any>(
+        `${SVC_BUSINESS_PARTNER}/A_Supplier${extra ? `?$expand=${extra}` : ''}`,
+        'fetchVendors',
       );
-      if (!response.ok) throw new Error(`Failed to fetch vendors: ${response.status}`);
-      const data = await response.json();
+      const fieldMap = ((this.config.metadata as any)?.sap_field_map?.vendor ?? {}) as Record<string, string>;
 
-      return (data.d?.results ?? []).map((bp: any) => ({
-        vendor_code: bp.Supplier,
-        // A_Supplier carries SupplierName. If the field is empty, fall back to
-        // the supplier number rather than inventing a name.
-        vendor_name: bp.SupplierName || bp.Supplier,
-        currency: this.rawDefaults().currencyCode || 'EUR',
-        // MOQ and rounding are properties of the info record, not the supplier
-        // master; 0 means "no constraint captured here".
-        min_order_qty: 0,
-        rounding_value: 0,
-        is_primary: false,
-      }));
+      return rows.map((bp: any) => {
+        const pick = (field: string, ...defaults: string[]): unknown => {
+          for (const key of [fieldMap[field], ...defaults].filter(Boolean) as string[]) {
+            const value = firstDefined(bp[key]);
+            if (value !== undefined) return value;
+          }
+          return undefined;
+        };
+        const number = (field: string, ...defaults: string[]): number | undefined => {
+          const raw = pick(field, ...defaults);
+          const parsed = raw === undefined ? NaN : Number(raw);
+          return Number.isFinite(parsed) ? parsed : undefined;
+        };
+
+        return {
+          vendor_code: bp.Supplier,
+          // A_Supplier carries SupplierName. If it is empty, use the number
+          // rather than inventing a name.
+          vendor_name: bp.SupplierName || bp.Supplier,
+          currency: String(pick('currency', 'Currency') ?? this.rawDefaults().currencyCode ?? 'EUR'),
+          // MOQ, rounding and contract price live on the purchasing info
+          // record. They are read only when the customer declares the field
+          // mapping; otherwise 0 means "no constraint captured here".
+          min_order_qty: number('min_order_qty', 'MinimumOrderQuantity', 'MinOrderQty') ?? 0,
+          rounding_value: number('rounding_value', 'RoundingValue') ?? 0,
+          contract_net_price: number('contract_net_price', 'NetPriceAmount', 'ContractNetPrice'),
+          is_primary: false,
+        };
+      });
     }, 'fetchVendors');
   }
 
@@ -591,14 +746,19 @@ export class SAPAdapter extends BaseERPAdapter {
       }
     }
 
-    const headerText = `SmartStock ${movement.reference_document ?? movement.movement_id}`;
+    // A deterministic reference is what makes OUTCOME_UNKNOWN resolvable:
+    // getPostingStatus() recomputes the identical BKTXT and looks up the SAP
+    // document instead of forcing a blind (and separately metered) retry.
+    const headerText = this.postingReference(
+      movement.external_reference ?? movement.reference_document ?? movement.movement_id,
+    );
 
     return {
       PostingDate: toSapDate(movement.reference_date),
       DocumentDate: toSapDate(movement.reference_date),
       GoodsMovementCode: goodsMovementCode,
-      // BKTXT is 25 characters; truncation is explicit rather than silent.
-      MaterialDocumentHeaderText: headerText.slice(0, 25),
+      // BKTXT is 25 characters; the helper never exceeds it.
+      MaterialDocumentHeaderText: headerText,
       to_MaterialDocumentItem: [item],
     };
   }
@@ -866,6 +1026,16 @@ export class SAPAdapter extends BaseERPAdapter {
       }
       return { success: true, erp_pr_number: number };
     } catch (err) {
+      // A transport failure after the POST was sent means SAP may have created
+      // the PR. Returning success:false would invite a duplicate submission.
+      if (isTransportFailure(err)) {
+        throw new OutcomeUnknownError(
+          `SAP PR write produced no definitive response: ${(err as Error).message}. ` +
+          `Resolve with getPostingStatus() before any retry.`,
+          err,
+        );
+      }
+      if (!isNonRetryable(err)) throw err;
       return { success: false, errors: [(err as Error).message] };
     }
   }
@@ -912,23 +1082,44 @@ export class SAPAdapter extends BaseERPAdapter {
     }
     body += `--${batchBoundary}--${CRLF}`;
 
-    const response = await this.sapRequest(
-      `${SVC_PURCHASE_REQ}/$batch`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': `multipart/mixed; boundary=${batchBoundary}` },
-        body,
-      },
-      { write: true },
-    );
+    // Writes are never retried here: a retry can create a second metered
+    // document. The circuit breaker only prevents sending a batch into a SAP
+    // system that has already failed repeatedly on reads.
+    if (this.isCircuitOpen()) {
+      throw new NonRetryableError(`Circuit breaker is OPEN for ${this.config.erp_type}`);
+    }
+
+    let response: Response;
+    try {
+      response = await this.sapRequest(
+        `${SVC_PURCHASE_REQ}/$batch`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': `multipart/mixed; boundary=${batchBoundary}` },
+          body,
+        },
+        { write: true },
+      );
+    } catch (err) {
+      this.recordFailure();
+      if (isTransportFailure(err)) {
+        throw new OutcomeUnknownError(
+          `SAP PR $batch produced no definitive response: ${(err as Error).message}. Commit state unknown.`,
+          err,
+        );
+      }
+      throw err;
+    }
 
     if (!response.ok) {
+      this.recordFailure();
       const detail = await this.readSapError(response);
       if (response.status >= 500) {
         throw new OutcomeUnknownError(`SAP PR $batch failed with HTTP ${response.status}: ${detail}`);
       }
       throw new NonRetryableError(`SAP PR $batch rejected (HTTP ${response.status}): ${detail}`);
     }
+    this.recordSuccess();
 
     const chunks = (await response.text()).split(`--${batchBoundary}`);
     const results: Array<{ success: boolean; erp_doc?: string; error?: string }> = [];
@@ -1034,6 +1225,14 @@ export class SAPAdapter extends BaseERPAdapter {
       }
       return { success: true, erp_po_number: number };
     } catch (err) {
+      if (isTransportFailure(err)) {
+        throw new OutcomeUnknownError(
+          `SAP PO write produced no definitive response: ${(err as Error).message}. ` +
+          `Resolve with getPostingStatus() before any retry; a duplicate PO is a second commercial commitment.`,
+          err,
+        );
+      }
+      if (!isNonRetryable(err)) throw err;
       return { success: false, errors: [(err as Error).message] };
     }
   }
@@ -1106,15 +1305,14 @@ export class SAPAdapter extends BaseERPAdapter {
 
   async fetchGoodsReceipts(since?: string): Promise<GoodsReceipt[]> {
     return this.withRetry(async () => {
-      const filter = since ? `&$filter=${encodeURIComponent(`PostingDate ge datetime'${since}'`)}` : '';
-      const response = await this.sapRequest(
-        `${SVC_MATERIAL_DOCUMENT}/${ENTITY_MATERIAL_DOCUMENT}?$expand=to_MaterialDocumentItem${filter}&$top=5000`,
+      const params = ['$expand=to_MaterialDocumentItem'];
+      if (since) params.push(`$filter=${encodeURIComponent(`PostingDate ge datetime'${since}'`)}`);
+      const headers = await this.fetchAll<any>(
+        `${SVC_MATERIAL_DOCUMENT}/${ENTITY_MATERIAL_DOCUMENT}?${params.join('&')}`,
+        'fetchGoodsReceipts',
       );
 
-      if (!response.ok) throw new Error(`GR fetch failed: ${response.status}`);
-      const data = await response.json();
-
-      return (data.d?.results ?? []).flatMap((header: any) =>
+      return headers.flatMap((header: any) =>
         (header.to_MaterialDocumentItem?.results ?? []).map((item: any) => ({
           gr_id: `${header.MaterialDocument}/${header.MaterialDocumentYear}/${item.MaterialDocumentItem}`,
           erp_gr_number: header.MaterialDocument,
@@ -1134,22 +1332,157 @@ export class SAPAdapter extends BaseERPAdapter {
     }, 'fetchGoodsReceipts');
   }
 
-  async fetchPurchaseOrders(_filters?: POFilter): Promise<PurchaseOrder[]> {
-    // Not implemented: reading POs back is a separate concern from the write
-    // path and is deliberately not guessed here.
-    return [];
+  async fetchPurchaseOrders(filters?: POFilter): Promise<PurchaseOrder[]> {
+    return this.withRetry(async () => {
+      const clauses: string[] = [];
+      if (filters?.vendor_code) {
+        clauses.push(`Supplier eq '${filters.vendor_code.replace(/'/g, "''")}'`);
+      }
+      if (filters?.since) {
+        clauses.push(`CreationDate ge datetimeoffset'${filters.since}'`);
+      }
+      const extra = this.extraExpands('purchaseOrder');
+      const params = [`$expand=${['to_PurchaseOrderItem', extra].filter(Boolean).join(',')}`];
+      if (clauses.length) params.push(`$filter=${encodeURIComponent(clauses.join(' and '))}`);
+
+      let rows: any[];
+      try {
+        rows = await this.fetchAll<any>(
+          `${SVC_PURCHASE_ORDER}/${ENTITY_PURCHASE_ORDER}?${params.join('&')}`,
+          'fetchPurchaseOrders',
+        );
+      } catch (err) {
+        // Some releases cannot filter on CreationDate/Supplier at the header.
+        // Fall back to a full read and filter in memory rather than returning [].
+        if (!clauses.length || !/HTTP 400/.test((err as Error).message)) throw err;
+        rows = await this.fetchAll<any>(
+          `${SVC_PURCHASE_ORDER}/${ENTITY_PURCHASE_ORDER}?$expand=${['to_PurchaseOrderItem', extra].filter(Boolean).join(',')}`,
+          'fetchPurchaseOrders',
+        );
+      }
+      const plant = filters?.store_id ? await this.resolvePlant(filters.store_id) : undefined;
+
+      const orders = rows.map((po: any): PurchaseOrder => {
+        const items: POItem[] = (po.to_PurchaseOrderItem?.results ?? []).map((item: any, idx: number) => ({
+          item_id: item.PurchaseOrderItem ?? String((idx + 1) * 10),
+          sku: item.Material ?? '',
+          quantity_ordered: asNumber(item.OrderQuantity),
+          quantity_delivered: asNumber(item.DeliveredQuantity ?? item.QuantityDelivered),
+          quantity_invoiced: asNumber(item.InvoicedQuantity ?? item.QuantityInvoiced),
+          uom: item.PurchaseOrderQuantityUnit ?? item.BaseUnit ?? '',
+          net_price: asNumber(item.NetPriceAmount),
+          delivery_date: item.DeliveryDate ?? '',
+          plant: item.Plant,
+        }));
+
+        const cancelled = po.IsCanceled === true || po.IsCanceled === 'X';
+        let status: PurchaseOrder['status'] = 'OPEN';
+        if (cancelled) status = 'CANCELLED';
+        else if (items.length && items.every((i) => i.quantity_ordered > 0 && i.quantity_invoiced >= i.quantity_ordered)) status = 'INVOICED';
+        else if (items.length && items.every((i) => i.quantity_ordered > 0 && i.quantity_delivered >= i.quantity_ordered)) status = 'DELIVERED';
+        else if (items.some((i) => i.quantity_delivered > 0)) status = 'PARTIALLY_DELIVERED';
+
+        const itemTotal = items.reduce((sum, i) => sum + i.quantity_ordered * i.net_price, 0);
+        return {
+          po_id: po.PurchaseOrder,
+          erp_po_number: po.PurchaseOrder,
+          vendor_code: po.Supplier ?? '',
+          vendor_name: po.SupplierName ?? po.Supplier ?? '',
+          items,
+          total_value: asNumber(po.TotalNetAmount ?? po.NetAmount, itemTotal),
+          currency: po.DocumentCurrency ?? this.rawDefaults().currencyCode ?? 'EUR',
+          status,
+          created_at: po.CreationDate ?? new Date().toISOString(),
+          po_type: po.PurchaseOrderType === 'UB' ? 'UB' : 'NB',
+        };
+      });
+
+      const scoped = plant ? orders.filter((o) => o.items.some((i) => i.plant === plant)) : orders;
+      return scoped.filter((o) =>
+        (!filters?.vendor_code || o.vendor_code === filters.vendor_code) &&
+        (!filters?.since || new Date(o.created_at).getTime() >= new Date(filters.since).getTime()),
+      );
+    }, 'fetchPurchaseOrders');
   }
 
   // ==================== STATUS PROBE ====================
 
-  override async getPostingStatus(_reference: string): Promise<PostingStatusResult> {
-    // Deliberately unimplemented rather than faked. Resolving OUTCOME_UNKNOWN
-    // requires a deterministic external reference stored on the SAP document,
-    // which this payload does not yet write. Until that exists, callers must
-    // treat OUTCOME_UNKNOWN as "needs a human", not "retry".
-    throw new NonRetryableError(
-      'getPostingStatus() is not implemented for SAPAdapter: no deterministic external reference is written to the material document yet.',
-    );
+  /**
+   * Resolves an OUTCOME_UNKNOWN posting by re-computing the deterministic BKTXT
+   * that was written on the material document. NOT_FOUND means "SAP has no such
+   * document"; FAILED means the probe itself could not be trusted — never treat
+   * that as permission to retry the write.
+   */
+  override async getPostingStatus(reference: string): Promise<PostingStatusResult> {
+    const bktxt = this.postingReference(reference);
+    try {
+      return await this.withRetry(async () => {
+        const filter = encodeURIComponent(`MaterialDocumentHeaderText eq '${bktxt.replace(/'/g, "''")}'`);
+        const url = `${SVC_MATERIAL_DOCUMENT}/${ENTITY_MATERIAL_DOCUMENT}` +
+          `?$filter=${filter}&$select=MaterialDocument,MaterialDocumentYear,MaterialDocumentHeaderText`;
+        const response = await this.sapRequest(this.withSapClient(url));
+
+        let headers: any[];
+        if (response.ok) {
+          headers = (await response.json())?.d?.results ?? [];
+        } else if (response.status === 400) {
+          // Some Gateway releases do not allow $filter on BKTXT. Match locally
+          // against recent documents instead of guessing a positive result.
+          const recent = await this.fetchAll<any>(
+            `${SVC_MATERIAL_DOCUMENT}/${ENTITY_MATERIAL_DOCUMENT}` +
+            `?$orderby=${encodeURIComponent('PostingDate desc')}&$top=200`,
+            'getPostingStatus',
+          );
+          headers = recent.filter((h: any) => h.MaterialDocumentHeaderText === bktxt);
+        } else {
+          throw new Error(`Posting status probe failed: HTTP ${response.status}`);
+        }
+
+        if (headers.length === 0) return { reference, found: false, status: 'NOT_FOUND' };
+        if (headers.length > 1) {
+          return {
+            reference,
+            found: true,
+            status: 'FAILED',
+            error_message: `${headers.length} material documents share reference '${bktxt}'; resolve manually.`,
+          };
+        }
+        return {
+          reference,
+          found: true,
+          erp_document_number: headers[0].MaterialDocument,
+          status: 'CONFIRMED',
+        };
+      }, 'getPostingStatus');
+    } catch (err) {
+      return { reference, found: false, status: 'FAILED', error_message: (err as Error).message };
+    }
+  }
+
+  /** Advertises exactly what this adapter can post, so callers can fail fast. */
+  override async capabilities(): Promise<ERPCapabilities> {
+    return {
+      ...(await super.capabilities()),
+      stockTransferCreate: true, // 301 with transfer_to_plant
+      apiVersions: {
+        OData: 'V2',
+        materialDocument: SVC_MATERIAL_DOCUMENT,
+        materialStock: SVC_MATERIAL_STOCK,
+        purchaseRequisition: SVC_PURCHASE_REQ,
+        purchaseOrder: SVC_PURCHASE_ORDER,
+        product: SVC_PRODUCT,
+        businessPartner: SVC_BUSINESS_PARTNER,
+      },
+      supportedMovementTypes: ['DAMAGE', 'GOODS_RECEIPT', 'TRANSFER_OUT'],
+      unsupportedMovementGuidance: {
+        SALE: 'Use a sales document/delivery (601) or the SAP POS integration.',
+        GOODS_ISSUE: 'Supply an explicit account assignment, or use DAMAGE (551).',
+        ADJUSTMENT: 'Use API_PHYSICAL_INVENTORY_DOC_SRV (701/702).',
+        COUNT: 'Use API_PHYSICAL_INVENTORY_DOC_SRV (701/702).',
+        TRANSFER_IN: 'Post the paired TRANSFER_OUT (301); a 301 both issues and receives.',
+        UB: 'Use the stock-transport-order API available in your release, never a plain PO.',
+      },
+    };
   }
 
   // ==================== HELPERS ====================

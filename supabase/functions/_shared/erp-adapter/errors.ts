@@ -52,6 +52,19 @@ export function isOutcomeUnknown(err: unknown): boolean {
   return e?.name === "OutcomeUnknownError" || e?.message === "Request timeout";
 }
 
+/**
+ * A fetch that never produced a definitive HTTP response. The ERP may already
+ * have committed the document, so these failures must be reported as
+ * outcome-unknown rather than collapsed into a plain `{ success: false }`.
+ */
+export function isTransportFailure(err: unknown): boolean {
+  if (isOutcomeUnknown(err)) return true;
+  const e = err as { name?: string; message?: string } | undefined;
+  if (!e) return false;
+  if (e instanceof TypeError) return true;
+  return /fetch failed|network|socket|econn|abort|timeout|terminated/i.test(e.message ?? '');
+}
+
 export function isNonRetryable(err: unknown): boolean {
   if (err instanceof NonRetryableError) return true;
   const e = err as { name?: string } | undefined;
