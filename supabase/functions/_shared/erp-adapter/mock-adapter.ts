@@ -85,6 +85,10 @@ export class MockAdapter extends BaseERPAdapter {
     return { success: true, erp_po_number: `PO-${Date.now()}` };
   }
 
+  async postEmergencyPO(po: PurchaseOrder): Promise<{ success: boolean; erp_po_number?: string; errors?: string[] }> {
+    return this.postPurchaseOrder(po);
+  }
+
   async fetchPurchaseOrders(filters?: POFilter): Promise<PurchaseOrder[]> { return []; }
   async fetchGoodsReceipts(since?: string): Promise<GoodsReceipt[]> { return []; }
 

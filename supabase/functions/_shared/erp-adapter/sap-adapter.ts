@@ -1,6 +1,6 @@
-// /supabase/functions/_shared/erp-adapter/sap-adapter.ts
+﻿// /supabase/functions/_shared/erp-adapter/sap-adapter.ts
 //
-// SAP S/4HANA adapter — released OData V2 services only.
+// SAP S/4HANA adapter ΓÇö released OData V2 services only.
 //
 // ---------------------------------------------------------------------------
 // VERIFIED CONTRACT
@@ -33,7 +33,7 @@
 //   551 scrap from unrestricted   553 scrap from inspection   555 scrap from blocked
 //   501 GR without PO (unrestricted)   301 one-step plant-to-plant transfer
 //   701/702 are physical-inventory differences and are NOT accepted by
-//   API_MATERIAL_DOCUMENT_SRV (KBA 2689573 / M7/096) — use
+//   API_MATERIAL_DOCUMENT_SRV (KBA 2689573 / M7/096) ΓÇö use
 //   API_PHYSICAL_INVENTORY_DOC_SRV instead.
 //
 // ---------------------------------------------------------------------------
@@ -46,8 +46,7 @@
 //
 // Anything the adapter cannot map with confidence is rejected with an
 // actionable error instead of being written as a plausible-but-wrong movement.
-//
-// imports remain unchanged...
+
 import { BaseERPAdapter } from './base-adapter.ts';
 import {
   ERPConfig, SAPAuthConfig, MaterialMaster, StockBaseline,
@@ -67,7 +66,6 @@ const SVC_PURCHASE_REQ = '/sap/opu/odata/sap/API_PURCHASEREQ_PROCESS_SRV';
 const SVC_PRODUCT = '/sap/opu/odata/sap/API_PRODUCT_SRV';
 const SVC_BUSINESS_PARTNER = '/sap/opu/odata/sap/API_BUSINESS_PARTNER';
 
-// Keep the verified entity names as module-level constants for reuse.
 const ENTITY_MATERIAL_DOCUMENT = 'A_MaterialDocumentHeader';
 const ENTITY_PURCHASE_ORDER = 'A_PurchaseOrder';
 const ENTITY_PURCHASE_REQ = 'A_PurchaseRequisitionHeader';
@@ -112,8 +110,6 @@ function collectCookies(res: Response): string {
     .join('; ');
 }
 
-// ==================== DEFAULTS & MAPPING ====================
-
 interface SapDefaults {
   companyCode: string;
   purchasingOrganization?: string;
@@ -121,24 +117,36 @@ interface SapDefaults {
   defaultStorageLocation: string;
 }
 
-// Default movement type + goods movement code mapping per SAP KBA 3333223.
-// Callers may override individual pairs via sap_movement_type / sap_goods_movement_code
-// on InventoryMovement domain objects; the adapter merges supplied overrides with
-// these defaults rather than requiring both to be present.
-const defaultMovementMap: Record<string, { goodsMovementCode: string; goodsMovementType: string }> = {
+// Default movement type + GoodsMovementCode pairing (SAP KBA 3333223).
+// A caller override may supply either half; the other is taken from here.
+// null means "no safe default exists" and the movement is rejected unless the
+// caller supplies the missing value explicitly.
+const defaultMovementMap: Record<string, { goodsMovementCode: string | null; goodsMovementType: string | null }> = {
   DAMAGE: { goodsMovementCode: '03', goodsMovementType: '551' },
   GOODS_RECEIPT: { goodsMovementCode: '05', goodsMovementType: '501' },
   TRANSFER_OUT: { goodsMovementCode: '04', goodsMovementType: '301' },
-  TRANSFER_IN: { goodsMovementCode: null, goodsMovementType: null }, // explicitly blocked; see switch
-  SALE: { goodsMovementCode: null, goodsMovementType: null }, // explicitly blocked; see switch
-  GOODS_ISSUE: { goodsMovementCode: '03', goodsMovementType: '201' }, // default but requires business destination
-  ADJUSTMENT: { goodsMovementCode: null, goodsMovementType: null }, // explicitly overridden per case
-  COUNT: { goodsMovementCode: null, goodsMovementType: null }, // explicitly blocked; see switch
+  TRANSFER_IN: { goodsMovementCode: null, goodsMovementType: null },
+  SALE: { goodsMovementCode: null, goodsMovementType: null },
+  GOODS_ISSUE: { goodsMovementCode: '03', goodsMovementType: '201' },
+  ADJUSTMENT: { goodsMovementCode: null, goodsMovementType: null },
+  COUNT: { goodsMovementCode: null, goodsMovementType: null },
 };
 
-/** Lookup a default mapping for a movement type. */
-function defaultMovementMapping(movementType: string): { goodsMovementCode?: string; goodsMovementType?: string } | undefined {
+function defaultMovementMapping(
+  movementType: string,
+): { goodsMovementCode: string | null; goodsMovementType: string | null } | undefined {
   return defaultMovementMap[movementType];
+}
+
+type MovementResolution =
+  | { ok: true; goodsMovementCode: string; goodsMovementType: string }
+  | { ok: false; reason: string };
+
+interface MovementOutcome {
+  success: boolean;
+  erp_doc?: string;
+  erp_doc_year?: string;
+  error?: string;
 }
 
 // ==================== ADAPTER ====================
@@ -208,23 +216,11 @@ export class SAPAdapter extends BaseERPAdapter {
     return this.accessToken!;
   }
 
-  // ==================== HEALTH CHECK ====================
-
-  private async healthCheck(): Promise<{ status: string; latency_ms: number }> {
-    const start = Date.now();
-    try {
-      await this.getAccessToken();
-      // A lightweight read against the product service to verify connectivity
-      const response = await this.sapRequest(`${SVC_PRODUCT}/A_Product?$top=1`, {});
-      const latencyMs = Date.now() - start;
-      return { status: response.ok ? 'up' : 'degraded', latency_ms };
-    } catch (error) {
-      const latencyMs = Date.now() - start;
-      return { status: 'down', latency_ms: latencyMs };
-    }
-  }
-
-  // ==================== CSRF (SAP Help: Cross-Site Request FORGERY Protection) ====================
+  // ==================== CSRF (SAP Help: Cross-Site Request Forgery Protection) ====================
+  //
+  // A modifying request needs BOTH the token returned by a GET carrying
+  // "X-CSRF-Token: Fetch" AND the anti-XSRF session cookie from that same
+  // response. Sending "Fetch" on the write itself always yields 403.
 
   private serviceRootOf(endpoint: string): string {
     const match = endpoint.match(/^(\/sap\/opu\/odata\/sap\/[^/?]+)/);
@@ -423,6 +419,38 @@ export class SAPAdapter extends BaseERPAdapter {
     }, 'fetchStockBaselines');
   }
 
+  private readStockQuantity(stock: any): number {
+    const nav = stock.to_MatlStkInAcctMod;
+    const rows = Array.isArray(nav?.results) ? nav.results : nav ? [nav] : [];
+    return rows.reduce(
+      (sum: number, row: any) => sum + (parseFloat(row?.MatlWrhsStkQtyInMatlBaseUnit ?? '0') || 0),
+      0,
+    );
+  }
+
+  async fetchVendors(): Promise<VendorInfo[]> {
+    return this.withRetry(async () => {
+      const response = await this.sapRequest(
+        `${SVC_BUSINESS_PARTNER}/A_Supplier?$select=Supplier,SupplierName&$top=5000`,
+      );
+      if (!response.ok) throw new Error(`Failed to fetch vendors: ${response.status}`);
+      const data = await response.json();
+
+      return (data.d?.results ?? []).map((bp: any) => ({
+        vendor_code: bp.Supplier,
+        // A_Supplier carries SupplierName. If the field is empty, fall back to
+        // the supplier number rather than inventing a name.
+        vendor_name: bp.SupplierName || bp.Supplier,
+        currency: this.rawDefaults().currencyCode || 'EUR',
+        // MOQ and rounding are properties of the info record, not the supplier
+        // master; 0 means "no constraint captured here".
+        min_order_qty: 0,
+        rounding_value: 0,
+        is_primary: false,
+      }));
+    }, 'fetchVendors');
+  }
+
   // ==================== INVENTORY MOVEMENTS ====================
 
   /**
@@ -475,11 +503,10 @@ export class SAPAdapter extends BaseERPAdapter {
    * silently corrupts the stock ledger and cannot be detected later.
    */
   private resolveMovement(movement: InventoryMovement): MovementResolution {
-    // Explicit override: caller supplies sap_movement_type and/or sap_goods_movement_code
-    // to override the default SAP mapping. The adapter uses whichever fields are
-    // provided — missing ones fall back to the default mapping for that movement type.
+    // Explicit override: the caller may supply either half. The missing half is
+    // inferred from the default mapping for this movement type. The adapter
+    // still refuses to invent a pairing it cannot derive.
     if (movement.sap_movement_type || movement.sap_goods_movement_code) {
-      // Infer the missing half from the default mapping for this movement type.
       const defaultMapping = defaultMovementMapping(movement.movement_type);
       const movementType = movement.sap_movement_type ?? defaultMapping?.goodsMovementType;
       const goodsMovementCode = movement.sap_goods_movement_code ?? defaultMapping?.goodsMovementCode;
@@ -487,23 +514,17 @@ export class SAPAdapter extends BaseERPAdapter {
       if (!movementType) {
         return {
           ok: false,
-          reason: `Cannot infer SAP movement type for '${movement.movement_type}'. Supply sap_movement_type or ensure a default mapping exists.`,
+          reason: `Cannot infer SAP movement type for '${movement.movement_type}'. Supply sap_movement_type or use a movement type with a default mapping.`,
         };
       }
-
       if (!goodsMovementCode) {
         return {
           ok: false,
-          reason: `Cannot infer SAP goods movement code for '${movement.movement_type}'. Supply sap_goods_movement_code or ensure a default mapping exists.`,
+          reason: `Cannot infer SAP goods movement code for '${movement.movement_type}'. Supply sap_goods_movement_code or use a movement type with a default mapping.`,
         };
       }
-
-      // Validate the supplied values
       if (!/^\d{3}$/.test(movementType)) {
-        return {
-          ok: false,
-          reason: `'${movementType}' is not a 3-digit SAP movement type.`,
-        };
+        return { ok: false, reason: `'${movementType}' is not a 3-digit SAP movement type.` };
       }
       if (!/^0[1-7]$/.test(goodsMovementCode)) {
         return {
@@ -511,7 +532,6 @@ export class SAPAdapter extends BaseERPAdapter {
           reason: `sap_goods_movement_code must be 01-07 (SAP KBA 3333223); received '${goodsMovementCode}'.`,
         };
       }
-
       return {
         ok: true,
         goodsMovementCode,
@@ -519,7 +539,6 @@ export class SAPAdapter extends BaseERPAdapter {
       };
     }
 
-    // Default mappings — no explicit override supplied, use the table-lookup.
     switch (movement.movement_type) {
       case 'DAMAGE':
         // 551 = withdrawal for scrapping from unrestricted-use stock.
@@ -575,31 +594,634 @@ export class SAPAdapter extends BaseERPAdapter {
     }
   }
 
-  // ==================== PURCHASE ORDER READ ====================
+  private buildMaterialDocumentPayload(
+    movement: InventoryMovement,
+    goodsMovementCode: string,
+    goodsMovementType: string,
+    plant: string,
+  ): Record<string, unknown> {
+    const item: Record<string, string> = {
+      Material: movement.sku,
+      Plant: plant,
+      StorageLocation: movement.storage_location || this.rawDefaults().defaultStorageLocation || '0001',
+      // 551 / 501 / 301 all read the quantity out of unrestricted-use stock.
+      GoodsMovementType: goodsMovementType,
+      EntryUnit: movement.uom,
+      QuantityInEntryUnit: Math.abs(movement.quantity).toString(),
+    };
 
-  /**
-   * Reads purchase orders back from SAP.
-   *
-   * NOTE: Reading POs from SAP is a separate concern from posting them.
-   * The API_PURCHASEORDER_PROCESS_SRV only supports write (POST).
-   * If you need a read path, consider:
-   *   - Using API_PURCHASE_ORDER_SRV (if available in your SAP release)
-   *   - Maintaining a local PO ledger from external procurement systems
-   *   - This method currently returns an empty array with a diagnostic log;
-   *     implement a proper SAP read endpoint when required.
-   */
-  async fetchPurchaseOrders(filters?: POFilter): Promise<PurchaseOrder[]> {
-    const { client_id, client_secret } = this.authConfig;
-    if (!client_id || !client_secret) {
-      console.warn('[sap-adapter] fetchPurchaseOrders skipped: SAP credentials not configured.');
-      return [];
+    if (movement.batch) item.Batch = movement.batch;
+    if (movement.sap_reason_code) item.GoodsMovementReasonCode = movement.sap_reason_code;
+    if (goodsMovementType === '301') {
+      item.IssuingOrReceivingPlant = movement.transfer_to_plant!;
+      if (movement.transfer_to_storage_location) {
+        item.IssuingOrReceivingStorageLoc = movement.transfer_to_storage_location;
+      }
     }
 
-    // $batch read is not supported by API_PURCHASEORDER_PROCESS_SRV.
-    // This is a placeholder that returns an empty array; implement a proper
-    // OData read against API_PURCHASE_ORDER_SRV when the read path is needed.
-    console.info('[sap-adapter] fetchPurchaseOrders: read path not yet implemented for API_PURCHASEORDER_PROCESS_SRV');
+    const headerText = `SmartStock ${movement.reference_document ?? movement.movement_id}`;
+
+    return {
+      PostingDate: toSapDate(movement.reference_date),
+      DocumentDate: toSapDate(movement.reference_date),
+      GoodsMovementCode: goodsMovementCode,
+      // BKTXT is 25 characters; truncation is explicit rather than silent.
+      MaterialDocumentHeaderText: headerText.slice(0, 25),
+      to_MaterialDocumentItem: [item],
+    };
+  }
+
+  private async sendMaterialDocumentBatch(
+    entries: Array<{ movement: InventoryMovement; goodsMovementCode: string; goodsMovementType: string }>,
+  ): Promise<MovementOutcome[]> {
+    const plantCache = new Map<string, string>();
+    for (const entry of entries) {
+      if (!plantCache.has(entry.movement.store_id)) {
+        plantCache.set(entry.movement.store_id, await this.resolvePlant(entry.movement.store_id));
+      }
+    }
+
+    const batchBoundary = newBoundary('batch');
+    const changesetBoundary = newBoundary('changeset');
+    const encoder = new TextEncoder();
+
+    let body = '';
+    for (const entry of entries) {
+      const payload = this.buildMaterialDocumentPayload(
+        entry.movement,
+        entry.goodsMovementCode,
+        entry.goodsMovementType,
+        plantCache.get(entry.movement.store_id)!,
+      );
+      const json = JSON.stringify(payload);
+
+      body += `--${batchBoundary}${CRLF}`;
+      body += `Content-Type: multipart/mixed; boundary=${changesetBoundary}${CRLF}${CRLF}`;
+      body += `--${changesetBoundary}${CRLF}`;
+      body += `Content-Type: application/http${CRLF}`;
+      body += `Content-Transfer-Encoding: binary${CRLF}${CRLF}`;
+      body += `POST ${SVC_MATERIAL_DOCUMENT}/${ENTITY_MATERIAL_DOCUMENT} HTTP/1.1${CRLF}`;
+      body += `Content-Type: application/json${CRLF}`;
+      body += `Content-Length: ${encoder.encode(json).length}${CRLF}${CRLF}`;
+      body += `${json}${CRLF}`;
+      body += `--${changesetBoundary}--${CRLF}`;
+    }
+    body += `--${batchBoundary}--${CRLF}`;
+
+    if (this.isCircuitOpen()) {
+      throw new NonRetryableError(`Circuit breaker is OPEN for ${this.config.erp_type}`);
+    }
+
+    let response: Response;
+    try {
+      response = await this.sapRequest(
+        `${SVC_MATERIAL_DOCUMENT}/$batch`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': `multipart/mixed; boundary=${batchBoundary}` },
+          body,
+        },
+        { write: true },
+      );
+    } catch (err) {
+      // The request left this process; SAP may have committed it.
+      this.recordFailure();
+      throw new OutcomeUnknownError(
+        `SAP material document $batch did not return a response: ${(err as Error).message}. ` +
+        `The commit state is unknown; do not retry blindly.`,
+        err,
+      );
+    }
+
+    if (!response.ok) {
+      const detail = await this.readSapError(response);
+      this.recordFailure();
+      if (response.status >= 500) {
+        throw new OutcomeUnknownError(
+          `SAP material document $batch failed with HTTP ${response.status}: ${detail}. Commit state unknown.`,
+        );
+      }
+      throw new NonRetryableError(`SAP material document $batch rejected (HTTP ${response.status}): ${detail}`);
+    }
+
+    this.recordSuccess();
+    return this.parseMaterialDocumentBatch(entries.length, await response.text(), batchBoundary);
+  }
+
+  private parseMaterialDocumentBatch(
+    expected: number,
+    responseText: string,
+    batchBoundary: string,
+  ): MovementOutcome[] {
+    const chunks = responseText.split(`--${batchBoundary}`);
+    const outcomes: MovementOutcome[] = [];
+
+    for (const chunk of chunks) {
+      const statusMatch = chunk.match(/HTTP\/1\.1\s+(\d{3})/);
+      if (!statusMatch) continue;
+
+      const status = Number(statusMatch[1]);
+      const isSuccess = status >= 200 && status < 300;
+
+      if (!isSuccess) {
+        const message = chunk.match(/"message"\s*:\s*\{[^}]*"value"\s*:\s*"([^"]+)"/);
+        outcomes.push({
+          success: false,
+          error: message ? message[1] : `SAP returned HTTP ${status}`,
+        });
+        continue;
+      }
+
+      const doc = chunk.match(/"MaterialDocument"\s*:\s*"(\d+)"/);
+      const year = chunk.match(/"MaterialDocumentYear"\s*:\s*"(\d+)"/);
+      if (!doc) {
+        // A 2xx without a document key means the sub-response could not be
+        // attributed. Never invent an identifier.
+        outcomes.push({
+          success: false,
+          error: 'SAP returned success but no MaterialDocument key; document number is unknown.',
+        });
+        continue;
+      }
+
+      outcomes.push({ success: true, erp_doc: doc[1], erp_doc_year: year ? year[1] : undefined });
+    }
+
+    // Positional mapping is only safe when the counts line up. If they do not,
+    // guessing would attach the wrong SAP document number to the wrong stock
+    // movement, so the whole batch becomes outcome-unknown.
+    if (outcomes.length !== expected) {
+      throw new OutcomeUnknownError(
+        `SAP $batch returned ${outcomes.length} sub-responses for ${expected} documents. ` +
+        `Per-movement commit state cannot be determined; do not retry blindly.`,
+      );
+    }
+
+    return outcomes;
+  }
+
+  // ==================== PROCUREMENT ====================
+
+  private defaults(): SapDefaults & { currencyCode: string } {
+    const sap = this.rawDefaults();
+
+    const missing: string[] = [];
+    if (!sap.companyCode) missing.push('companyCode');
+    if (!sap.purchasingGroup) missing.push('purchasingGroup');
+
+    if (missing.length > 0) {
+      throw new SapConfigurationError(
+        `SAP master data is not configured: erp_configurations.metadata.sap_defaults is missing ${missing.join(', ')}. ` +
+        `These values are customer-specific and are never defaulted by the platform.`,
+      );
+    }
+
+    return {
+      companyCode: sap.companyCode!,
+      purchasingOrganization: sap.purchasingOrganization,
+      purchasingGroup: sap.purchasingGroup!,
+      defaultStorageLocation: sap.defaultStorageLocation || '0001',
+      currencyCode: sap.currencyCode || 'EUR',
+    };
+  }
+
+  /** Never throws: safe for read paths and optional fields. */
+  private rawDefaults(): Partial<SapDefaults> & { currencyCode?: string } {
+    const metadata = (this.config.metadata ?? {}) as Record<string, any>;
+    const sap = (metadata.sap_defaults ?? {}) as Partial<SapDefaults> & { currencyCode?: string };
+
+    // erp_configurations carries the org units as first-class columns; honour
+    // them before declaring the configuration incomplete.
+    return {
+      ...sap,
+      companyCode: sap.companyCode ?? this.config.company_code,
+      purchasingOrganization: sap.purchasingOrganization ?? this.config.purchasing_org,
+      purchasingGroup: sap.purchasingGroup ?? this.config.purchasing_group,
+    };
+  }
+
+  private buildPurchaseRequisitionPayload(item: {
+    material: string;
+    plant: string;
+    quantity: number;
+    uom: string;
+    estimatedPrice?: number;
+    reference?: string;
+  }): Record<string, unknown> {
+    const d = this.defaults();
+
+    const requisitionItem: Record<string, unknown> = {
+      PurchaseRequisitionItem: '10',
+      PurchaseRequisitionItemText: item.material.slice(0, 40),
+      Material: item.material,
+      Plant: item.plant,
+      CompanyCode: d.companyCode,
+      PurchasingGroup: d.purchasingGroup,
+      RequestedQuantity: item.quantity.toString(),
+      BaseUnit: item.uom,
+      // A missing estimated price is omitted rather than sent as 0. A zero
+      // price is a real commercial statement and would misstate the requisition
+      // value in every downstream approval report.
+      to_PurchaseReqnAcctAssgmt: { results: [] },
+      to_PurchaseReqnDeliveryAddress: {},
+      to_PurchaseReqnItemText: { results: [] },
+    };
+
+    if (typeof item.estimatedPrice === 'number' && Number.isFinite(item.estimatedPrice)) {
+      requisitionItem.PurchaseRequisitionPrice = item.estimatedPrice.toString();
+      requisitionItem.PurReqnPriceQuantity = '1';
+    }
+
+    return {
+      PurchaseRequisition: '',
+      PurchaseRequisitionType: 'NB',
+      PurReqnDescription: (item.reference || 'SmartStock replenishment').slice(0, 40),
+      SourceDetermination: false,
+      PurReqnDoOnlyValidation: false,
+      to_PurchaseReqnItem: { results: [requisitionItem] },
+    };
+  }
+
+  async postPurchaseRequisition(
+    pr: PurchaseRequisition,
+  ): Promise<{ success: boolean; erp_pr_number?: string; errors?: string[] }> {
+    const items = pr.items ?? [];
+    if (items.length === 0) {
+      return { success: false, errors: ['Purchase requisition contains no items.'] };
+    }
+    if (items.length > 1) {
+      // The released API creates one PR per request; multi-item PRs need a
+      // single header payload with several to_PurchaseReqnItem entries, which
+      // is handled by executeBatchPR. Fail loudly instead of silently dropping
+      // all but the first item.
+      return {
+        success: false,
+        errors: ['postPurchaseRequisition accepts a single-item requisition. Use executeBatchPR for multi-item requisitions.'],
+      };
+    }
+
+    const item = items[0];
+    if (!item.plant) {
+      return { success: false, errors: ['A SAP plant is required to create a purchase requisition.'] };
+    }
+    const plant = await this.resolvePlant(item.plant);
+
+    try {
+      const payload = this.buildPurchaseRequisitionPayload({
+        material: item.sku,
+        plant,
+        quantity: item.quantity_approved ?? item.quantity_requested,
+        uom: item.uom,
+        estimatedPrice: item.estimated_unit_price ?? undefined,
+        reference: pr.pr_id,
+      });
+
+      const response = await this.sapRequest(
+        `${SVC_PURCHASE_REQ}/${ENTITY_PURCHASE_REQ}`,
+        { method: 'POST', body: JSON.stringify(payload) },
+        { write: true },
+      );
+
+      if (!response.ok) {
+        const detail = await this.readSapError(response);
+        return { success: false, errors: [`SAP PR creation failed (HTTP ${response.status}): ${detail}`] };
+      }
+
+      const data = await response.json();
+      const number = data?.d?.PurchaseRequisition;
+      if (!number) {
+        return { success: false, errors: ['SAP accepted the requisition but returned no PurchaseRequisition number.'] };
+      }
+      return { success: true, erp_pr_number: number };
+    } catch (err) {
+      return { success: false, errors: [(err as Error).message] };
+    }
+  }
+
+  async executeBatchPR(items: Array<{
+    stagedPrId: string;
+    material: string;
+    plant: string;
+    storageLocation?: string;
+    quantity: number;
+    uom: string;
+    vendor?: string;
+    deliveryDate?: string;
+    estimatedPrice?: number;
+  }>): Promise<BatchResult<any>> {
+    if (items.length === 0) return this.createBatchResult(items, []);
+
+    const batchBoundary = newBoundary('batch');
+    const changesetBoundary = newBoundary('changeset');
+    const encoder = new TextEncoder();
+
+    let body = '';
+    for (const item of items) {
+      const payload = this.buildPurchaseRequisitionPayload({
+        material: item.material,
+        plant: item.plant,
+        quantity: item.quantity,
+        uom: item.uom,
+        estimatedPrice: item.estimatedPrice,
+        reference: item.stagedPrId,
+      });
+      const json = JSON.stringify(payload);
+
+      body += `--${batchBoundary}${CRLF}`;
+      body += `Content-Type: multipart/mixed; boundary=${changesetBoundary}${CRLF}${CRLF}`;
+      body += `--${changesetBoundary}${CRLF}`;
+      body += `Content-Type: application/http${CRLF}`;
+      body += `Content-Transfer-Encoding: binary${CRLF}${CRLF}`;
+      body += `POST ${SVC_PURCHASE_REQ}/${ENTITY_PURCHASE_REQ} HTTP/1.1${CRLF}`;
+      body += `Content-Type: application/json${CRLF}`;
+      body += `Content-Length: ${encoder.encode(json).length}${CRLF}${CRLF}`;
+      body += `${json}${CRLF}`;
+      body += `--${changesetBoundary}--${CRLF}`;
+    }
+    body += `--${batchBoundary}--${CRLF}`;
+
+    const response = await this.sapRequest(
+      `${SVC_PURCHASE_REQ}/$batch`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': `multipart/mixed; boundary=${batchBoundary}` },
+        body,
+      },
+      { write: true },
+    );
+
+    if (!response.ok) {
+      const detail = await this.readSapError(response);
+      if (response.status >= 500) {
+        throw new OutcomeUnknownError(`SAP PR $batch failed with HTTP ${response.status}: ${detail}`);
+      }
+      throw new NonRetryableError(`SAP PR $batch rejected (HTTP ${response.status}): ${detail}`);
+    }
+
+    const chunks = (await response.text()).split(`--${batchBoundary}`);
+    const results: Array<{ success: boolean; erp_doc?: string; error?: string }> = [];
+
+    for (const chunk of chunks) {
+      const statusMatch = chunk.match(/HTTP\/1\.1\s+(\d{3})/);
+      if (!statusMatch) continue;
+      const status = Number(statusMatch[1]);
+      const ok = status >= 200 && status < 300;
+      if (!ok) {
+        const message = chunk.match(/"message"\s*:\s*\{[^}]*"value"\s*:\s*"([^"]+)"/);
+        results.push({ success: false, error: message ? message[1] : `SAP returned HTTP ${status}` });
+        continue;
+      }
+      const doc = chunk.match(/"PurchaseRequisition"\s*:\s*"(\d+)"/);
+      results.push(
+        doc
+          ? { success: true, erp_doc: doc[1] }
+          : { success: false, error: 'SAP accepted the requisition but returned no PurchaseRequisition number.' },
+      );
+    }
+
+    if (results.length !== items.length) {
+      throw new OutcomeUnknownError(
+        `SAP PR $batch returned ${results.length} sub-responses for ${items.length} requisitions.`,
+      );
+    }
+
+    return this.createBatchResult(items, results);
+  }
+
+  async postPurchaseOrder(po: PurchaseOrder): Promise<{ success: boolean; erp_po_number?: string; errors?: string[] }> {
+    if (po.po_type === 'UB') {
+      // Stock transport orders are not creatable through
+      // API_PURCHASEORDER_PROCESS_SRV in every release. SAP shipped the
+      // dedicated API_STOCKTRANSPORTORDER (OData V4) with S/4HANA Cloud Public
+      // Edition 2602. Refuse rather than creating a normal PO that looks like
+      // an STO but moves no stock.
+      return {
+        success: false,
+        errors: [
+          'Stock transport orders (UB) are not supported by this adapter. ' +
+          'Use API_STOCKTRANSPORTORDER (S/4HANA Cloud Public Edition 2602+) or the ' +
+          'customer-specific STO process; a plain PO must not be substituted.',
+        ],
+      };
+    }
+
+    const d = this.defaults();
+    const items = po.items ?? [];
+    if (items.length === 0) return { success: false, errors: ['Purchase order contains no items.'] };
+
+    if (!d.purchasingOrganization) {
+      return {
+        success: false,
+        errors: [
+          'SAP purchasing organisation is not configured: set erp_configurations.purchasing_org (or metadata.sap_defaults.purchasingOrganization). ' +
+          'It is not derived from the company code.',
+        ],
+      };
+    }
+
+    const missingPlant = items.filter((i) => !i.plant);
+    if (missingPlant.length > 0) {
+      return { success: false, errors: ['Every purchase order item requires a SAP plant.'] };
+    }
+
+    const payload = {
+      CompanyCode: d.companyCode,
+      PurchaseOrderType: po.po_type ?? 'NB',
+      Supplier: po.vendor_code,
+      DocumentCurrency: po.currency || d.currencyCode,
+      PurchasingOrganization: d.purchasingOrganization,
+      PurchasingGroup: d.purchasingGroup,
+      to_PurchaseOrderItem: items.map((item, idx) => ({
+        PurchaseOrderItem: ((idx + 1) * 10).toString().padStart(5, '0'),
+        PurchaseOrderItemText: item.sku.slice(0, 40),
+        Material: item.sku,
+        Plant: item.plant,
+        OrderQuantity: item.quantity_ordered.toString(),
+        PurchaseOrderQuantityUnit: item.uom,
+        NetPriceAmount: item.net_price.toString(),
+        NetPriceQuantity: '1',
+      })),
+    };
+
+    try {
+      const response = await this.sapRequest(
+        `${SVC_PURCHASE_ORDER}/${ENTITY_PURCHASE_ORDER}`,
+        { method: 'POST', body: JSON.stringify(payload) },
+        { write: true },
+      );
+
+      if (!response.ok) {
+        const detail = await this.readSapError(response);
+        return { success: false, errors: [`SAP PO creation failed (HTTP ${response.status}): ${detail}`] };
+      }
+
+      const data = await response.json();
+      const number = data?.d?.PurchaseOrder;
+      if (!number) {
+        return { success: false, errors: ['SAP accepted the purchase order but returned no PurchaseOrder number.'] };
+      }
+      return { success: true, erp_po_number: number };
+    } catch (err) {
+      return { success: false, errors: [(err as Error).message] };
+    }
+  }
+
+  async postEmergencyPO(po: PurchaseOrder): Promise<{ success: boolean; erp_po_number?: string; errors?: string[] }> {
+    return this.postPurchaseOrder(po);
+  }
+
+  // ==================== ATP & RECONCILIATION ====================
+
+  async checkATP(
+    sku: string,
+    store_id: string,
+    requested_qty: number,
+  ): Promise<{ available: boolean; atp_qty: number; delivery_date?: string }> {
+    return this.withRetry(async () => {
+      const plant = await this.resolvePlant(store_id);
+      // Uses $filter rather than a key predicate: the A_MaterialStock key
+      // includes stock-type and special-stock dimensions whose values would
+      // otherwise have to be guessed.
+      const response = await this.sapRequest(
+        `${SVC_MATERIAL_STOCK}/A_MaterialStock` +
+        `?$filter=${encodeURIComponent(`Material eq '${sku}' and Plant eq '${plant}' and InventoryStockType eq '01'`)}` +
+        `&$expand=to_MatlStkInAcctMod`,
+      );
+
+      if (!response.ok) throw new Error(`ATP check failed: ${response.status}`);
+      const data = await response.json();
+      const rows = data.d?.results ?? [];
+      const atpQty = rows.reduce((sum: number, row: any) => sum + this.readStockQuantity(row), 0);
+
+      return { available: atpQty >= requested_qty, atp_qty: atpQty };
+    }, 'checkATP');
+  }
+
+  /**
+   * Returns the SAP side of a reconciliation.
+   *
+   * The adapter owns no database client and must stay stateless: it reports
+   * what SAP says. The caller (erp-reconciliation) joins this with the local
+   * `inventory_position` read-model and computes the variance. Returning a
+   * fabricated local_total here would hide real discrepancies.
+   */
+  async reconcileStock(store_id: string, sku?: string): Promise<ReconciliationResult> {
+    const sapStock = await this.fetchStockBaselines(store_id);
+    const rows = sku ? sapStock.filter((s) => s.sku === sku) : sapStock;
+    const erpTotal = rows.reduce((sum, s) => sum + (s.quantity_unrestricted ?? 0), 0);
+
+    return {
+      store_id,
+      sku,
+      erp_total: erpTotal,
+      // Local twin is supplied by the caller; the adapter never invents it.
+      local_total: 0,
+      variance: 0,
+      variance_percentage: 0,
+      last_common_transaction: new Date().toISOString(),
+      // Per-SKU ERP truth. The caller fills local_qty and recomputes diff from
+      // its own inventory_position read-model.
+      discrepancies: rows.map((r) => ({
+        sku: r.sku,
+        erp_qty: r.quantity_unrestricted ?? 0,
+        local_qty: 0,
+        diff: 0,
+      })),
+    };
+  }
+
+  // ==================== GOODS RECEIPT FETCH ====================
+
+  async fetchGoodsReceipts(since?: string): Promise<GoodsReceipt[]> {
+    return this.withRetry(async () => {
+      const filter = since ? `&$filter=${encodeURIComponent(`PostingDate ge datetime'${since}'`)}` : '';
+      const response = await this.sapRequest(
+        `${SVC_MATERIAL_DOCUMENT}/${ENTITY_MATERIAL_DOCUMENT}?$expand=to_MaterialDocumentItem${filter}&$top=5000`,
+      );
+
+      if (!response.ok) throw new Error(`GR fetch failed: ${response.status}`);
+      const data = await response.json();
+
+      return (data.d?.results ?? []).flatMap((header: any) =>
+        (header.to_MaterialDocumentItem?.results ?? []).map((item: any) => ({
+          gr_id: `${header.MaterialDocument}/${header.MaterialDocumentYear}/${item.MaterialDocumentItem}`,
+          erp_gr_number: header.MaterialDocument,
+          erp_gr_year: header.MaterialDocumentYear,
+          erp_po_number: item.PurchaseOrder,
+          erp_po_item: item.PurchaseOrderItem,
+          sku: item.Material,
+          store_id: item.Plant,
+          erp_plant: item.Plant,
+          erp_storage_location: item.StorageLocation,
+          quantity_received: parseFloat(item.QuantityInEntryUnit || 0),
+          uom: item.EntryUnit,
+          batch_number: item.Batch,
+          posted_at: header.PostingDate,
+        }))
+      );
+    }, 'fetchGoodsReceipts');
+  }
+
+  async fetchPurchaseOrders(_filters?: POFilter): Promise<PurchaseOrder[]> {
+    // Not implemented: reading POs back is a separate concern from the write
+    // path and is deliberately not guessed here.
     return [];
   }
 
-  // ==================== REST OF FILE ====================
+  // ==================== STATUS PROBE ====================
+
+  override async getPostingStatus(_reference: string): Promise<PostingStatusResult> {
+    // Deliberately unimplemented rather than faked. Resolving OUTCOME_UNKNOWN
+    // requires a deterministic external reference stored on the SAP document,
+    // which this payload does not yet write. Until that exists, callers must
+    // treat OUTCOME_UNKNOWN as "needs a human", not "retry".
+    throw new NonRetryableError(
+      'getPostingStatus() is not implemented for SAPAdapter: no deterministic external reference is written to the material document yet.',
+    );
+  }
+
+  // ==================== HELPERS ====================
+
+  private async resolvePlant(store_id: string): Promise<string> {
+    const metadata = (this.config.metadata ?? {}) as Record<string, any>;
+    const map = (metadata.plant_map ?? {}) as Record<string, string>;
+
+    // Priority 1: explicit plant map
+    if (map[store_id]) return map[store_id];
+
+    // Priority 2: fall back to store_id only if it looks like a plant ID
+    // (3-digit numeric code). If store_id is alphanumeric or has prefixes,
+    // treat it as a store reference and throw a clear error so the caller
+    // cannot silently post to the wrong plant.
+    const fallback = map['*'];
+    if (fallback) return fallback;
+
+    // Heuristic: 3-digit numeric = likely a plant ID; anything else = likely
+    // a store code and should not be used as a plant without explicit mapping.
+    if (/^\d{3}$/.test(store_id)) {
+      console.warn(`[sap-adapter] No plant mapping for store_id '${store_id}'; using as plant fallback. ` +
+        'Configure plant_map in erp_configurations.metadata for correct behavior.');
+      return store_id;
+    }
+
+    throw new SapConfigurationError(
+      `SAP plant not configured for store '${store_id}'. ` +
+      'Add an entry to erp_configurations.metadata.plant_map keyed by store_id, ' +
+      'or configure a wildcard plant_map["*"] for a default plant.',
+    );
+  }
+
+  async healthCheck(): Promise<{ status: 'healthy' | 'degraded' | 'down'; latency_ms: number }> {
+    const start = Date.now();
+    try {
+      const response = await this.sapRequest(`${SVC_PRODUCT}/A_Product?$top=1`);
+      const latency = Date.now() - start;
+
+      if (response.ok) return { status: 'healthy', latency_ms: latency };
+      if (response.status >= 500) return { status: 'degraded', latency_ms: latency };
+      return { status: 'down', latency_ms: latency };
+    } catch {
+      return { status: 'down', latency_ms: Date.now() - start };
+    }
+  }
+}

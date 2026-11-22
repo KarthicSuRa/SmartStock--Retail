@@ -99,7 +99,7 @@ export class ConflictResolver {
 
   private applyDiff(local: any, diff: Record<string, { old: any; new: any }>): any {
     const merged = { ...local };
-    for (const [field, values] of Object.entries(diff)) {
+    for (const [field, values] of Object.entries(diff) as Array<[string, { old: any; new: any }]>) {
       merged[field] = values.new;
     }
     merged.last_synced_at = new Date().toISOString();
@@ -109,7 +109,7 @@ export class ConflictResolver {
   private smartMerge(local: any, erp: any, diff: any): any {
     const merged = { ...local };
     
-    for (const [field, values] of Object.entries(diff)) {
+    for (const [field, values] of Object.entries(diff) as Array<[string, { old: any; new: any }]>) {
       if (field === 'description' || field === 'vendor_name') {
         merged[field] = values.new;
       } else if (field.includes('price')) {

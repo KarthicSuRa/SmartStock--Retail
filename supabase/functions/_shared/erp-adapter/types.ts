@@ -96,6 +96,11 @@ export interface StockBaseline {
   quantity_blocked: number;
   atp_quantity: number;        // Available-to-Promise
   last_updated: string;
+  /**
+   * SAP InventoryStockType for this row: 01 unrestricted, 02 blocked,
+   * 03 inspection, 04 quality. Present when the source can supply it.
+   */
+  stock_type?: string;
 }
 
 export interface InventoryMovement {
@@ -256,6 +261,13 @@ export interface IERPAdapter {
   postPurchaseOrder(po: PurchaseOrder): Promise<{ success: boolean; erp_po_number?: string; errors?: string[] }>;
 
   /**
+   * Emergency replenishment path. An adapter that cannot distinguish it from a
+   * normal purchase order may delegate; SAP delegates to postPurchaseOrder,
+   * which still refuses stock transport orders (po_type 'UB').
+   */
+  postEmergencyPO(po: PurchaseOrder): Promise<{ success: boolean; erp_po_number?: string; errors?: string[] }>;
+
+  /**
    * Submits several requisitions in one ERP round trip. Optional: adapters that
    * cannot batch are driven item-by-item by the caller instead.
    */
@@ -298,12 +310,23 @@ export interface POFilter {
 
 export interface GoodsReceipt {
   gr_id: string;
-  po_number: string;
+  /** SAP material document number (the goods-receipt document). */
+  erp_gr_number?: string;
+  /** SAP material document year (MJAHR). */
+  erp_gr_year?: string;
+  erp_po_number?: string;
+  erp_po_item?: string;
+  po_number?: string;
   sku: string;
   quantity_received: number;
   uom: string;
-  posting_date: string;
+  posting_date?: string;
+  /** SAP PostingDate as returned by the material-document service. */
+  posted_at?: string;
   store_id: string;
+  erp_plant?: string;
+  erp_storage_location?: string;
+  batch_number?: string;
 }
 
 export interface ReconciliationResult {

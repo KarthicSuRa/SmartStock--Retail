@@ -154,6 +154,7 @@ export abstract class BaseERPAdapter implements IERPAdapter {
   abstract postInventoryMovements(movements: InventoryMovement[]): Promise<BatchResult<InventoryMovement>>;
   abstract postPurchaseRequisition(pr: PurchaseRequisition): Promise<{ success: boolean; erp_pr_number?: string; errors?: string[] }>;
   abstract postPurchaseOrder(po: PurchaseOrder): Promise<{ success: boolean; erp_po_number?: string; errors?: string[] }>;
+  abstract postEmergencyPO(po: PurchaseOrder): Promise<{ success: boolean; erp_po_number?: string; errors?: string[] }>;
   abstract fetchPurchaseOrders(filters?: POFilter): Promise<PurchaseOrder[]>;
   abstract fetchGoodsReceipts(since?: string): Promise<GoodsReceipt[]>;
   abstract checkATP(sku: string, store_id: string, requested_qty: number): Promise<{ available: boolean; atp_qty: number; delivery_date?: string }>;
