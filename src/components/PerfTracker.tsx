@@ -62,9 +62,24 @@ export function PerfTracker() {
       })
     }
 
+    const nav = firstEntry('navigation') as PerformanceNavigationTiming | undefined
+
     let lcp: number | undefined
     let cls = 0
     let inp: number | undefined
+
+    let bytesIn = sizeOf(nav) ?? 0
+    const addBytes = (value: number | undefined) => {
+      if (value) bytesIn += value
+    }
+
+    const resourceObserver = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries() as PerformanceResourceTiming[]) {
+        addBytes(entry.encodedBodySize || entry.transferSize)
+      }
+    })
+    // Resource timing needs a buffer for first paint entries.
+    resourceObserver.observe({ type: 'resource', entryTypes: ['resource'], buffered: true })
 
     const observer = new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {
@@ -81,16 +96,20 @@ export function PerfTracker() {
     observer.observe({ type: 'event', buffered: true } as PerformanceObserverInit)
 
     const paint = firstEntry('paint', 'first-contentful-paint')
-    const nav = firstEntry('navigation') as PerformanceNavigationTiming | undefined
     sendSnapshot({
       fcp_ms: metric((paint as PerformancePaintTiming | undefined)?.startTime),
       lcp_ms: undefined, // set by observer below
       cls: undefined,
-      bytes_in: sizeOf(nav),
+      bytes_in: metric(sizeOf(nav)),
       is_first_view: !window.name,
     })
     // Second snapshot with LCP when available (observer is async).
-    const second = setTimeout(() => sendSnapshot({ lcp_ms: lcp, cls: Math.min(cls, 100), inp_ms: metric(inp) }), 800)
+    const second = setTimeout(() => sendSnapshot({
+      lcp_ms: lcp,
+      cls: Math.min(cls, 100),
+      inp_ms: metric(inp),
+      bytes_in: Math.round(bytesIn),
+    }), 800)
 
     return () => observer.disconnect()
   }, [tenantId])
