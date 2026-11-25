@@ -2,15 +2,29 @@
 
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, lazy, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import { useRealtimeInventory } from '@/hooks/useRealtimeInventory';
 import { useStoreContext } from '@/hooks/useStoreContext';
 import { useOfflineQueue } from '@/hooks/useOfflineQueue';
-import { ProductionBarcodeScanner, ScanResult } from '@/components/scanner/ProductionBarcodeScanner';
+import type { ScanResult } from '@/components/scanner/ProductionBarcodeScanner';
 import { SyncStatusBar } from '@/components/layout/SyncStatusBar';
 import { BottomNav } from '@/components/layout/BottomNav';
-import { ArrowLeft, ClipboardCheck, Layers } from 'lucide-react';
+import { ArrowLeft, ClipboardCheck, Layers, Loader2 } from 'lucide-react';
+
+// Lazy: html5-qrcode is a large third-party scanner chunk; only load it when the scan page opens.
+const ProductionBarcodeScanner = lazy(() =>
+  import('@/components/scanner/ProductionBarcodeScanner').then((m) => ({ default: m.ProductionBarcodeScanner })),
+);
+
+function ScannerSkeleton() {
+  return (
+    <div className="flex items-center justify-center h-full gap-2 text-slate-400 text-sm">
+      <Loader2 className="w-4 h-4 animate-spin" />
+      Loading scanner…
+    </div>
+  );
+}
 
 export default function ScanPage() {
   const router = useRouter();
@@ -95,11 +109,13 @@ export default function ScanPage() {
       </header>
 
       <div className="flex-1 overflow-hidden">
-        <ProductionBarcodeScanner
-          mode={mode}
-          onScan={handleScan}
-          onBatchComplete={handleBatchComplete}
-        />
+        <Suspense fallback={<ScannerSkeleton />}>
+          <ProductionBarcodeScanner
+            mode={mode}
+            onScan={handleScan}
+            onBatchComplete={handleBatchComplete}
+          />
+        </Suspense>
       </div>
 
       <BottomNav role="floor_staff" />

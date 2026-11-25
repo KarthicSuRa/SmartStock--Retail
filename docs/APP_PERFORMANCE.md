@@ -52,6 +52,17 @@ Route links from `/admin/integrations` to the performance page.
 - `productionBrowserSourceMaps: false` — smaller first bytes.
 - `experimental.optimizePackageImports: true` — tree-shakes unused package exports.
 
+## 4a. Measured sizes (2026-11-25, `next build`)
+
+- Total `.next/static`: **2,683,000 bytes** (~2.62 MB) in this working copy.
+- Largest chunk: `8cbf6371-86e11e381c574607.js` at **281.6 KB** (core ZXing scanner dependency).
+- Second: `framework-b54fa25e4c5cff25.js` at **213.9 KB**.
+
+Hillclimbing results so far:
+
+- Split the HTML5 QR scanner (`html5-qrcode`) onto the scan and shelf-health pages with `React.lazy` + `Suspense` — these chunks now load only when those routes open.
+- Disabled browser source maps and enabled package-import tree-shaking (`experimental.optimizePackageImports`).
+
 Further, high-leverage wins we can tune by measuring first:
 
 1. **Route prefetching off for heavy routes** — Next `link` prefetch can add bytes on slow

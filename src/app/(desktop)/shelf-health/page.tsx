@@ -1,8 +1,20 @@
 'use client';
 
-import React from 'react';
-import { ShelfHealthScanner } from '@/components/scanner/ShelfHealthScanner';
-import { Eye, Camera, ShieldCheck } from 'lucide-react';
+import React, { lazy, Suspense } from 'react';
+import { Eye, Camera, ShieldCheck, Loader2 } from 'lucide-react';
+
+const ShelfHealthScanner = lazy(() =>
+  import('@/components/scanner/ShelfHealthScanner').then((m) => ({ default: m.ShelfHealthScanner })),
+);
+
+function ScannerSkeleton() {
+  return (
+    <div className="flex items-center justify-center p-12 gap-2 text-slate-400 text-sm">
+      <Loader2 className="w-4 h-4 animate-spin" />
+      Loading scanner…
+    </div>
+  );
+}
 
 export default function DesktopShelfHealthPage() {
   return (
@@ -29,7 +41,9 @@ export default function DesktopShelfHealthPage() {
 
       {/* Main Scanner Container (White Theme) */}
       <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs">
-        <ShelfHealthScanner />
+        <Suspense fallback={<ScannerSkeleton />}>
+          <ShelfHealthScanner />
+        </Suspense>
       </div>
     </div>
   );
