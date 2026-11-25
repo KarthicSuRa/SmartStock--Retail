@@ -1,5 +1,8 @@
 'use client';
 
+// Static shell — Next serves the HTML from the static cache, cutting TTFB and bytes for repeat loads.
+export const dynamic = 'force-static';
+
 // src/app/page.tsx
 // SmartStock LiveRetail — Enterprise Landing Page
 

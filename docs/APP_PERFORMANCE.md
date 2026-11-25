@@ -98,14 +98,10 @@ Warm-request measurements from this machine (`Invoke-WebRequest`, `Stopwatch`):
 
 ### After optimization (2026-11-25)
 
-Top route `/admin/integrations` now has `export const dynamic = 'force-static'`
-in `src/app/(desktop)/admin/integrations/page.tsx`. Warm measurements after the change:
+1. `/admin/integrations` — `export const dynamic = 'force-static'` added (`src/app/(desktop)/admin/integrations/page.tsx`): 1822.8 ms → 910.6 ms warm.
+2. `/` and `/admin/integrations/performance` — same change applied in round 2; warm re-measures: `/` → 3063.4 ms, `/admin/integrations/performance` → 1965.3 ms, `/admin/integrations` → 1952.4 ms.
 
-| Route | Baseline (dev) | After (static) |
-|---|---:|---:|
-| `/admin/integrations` | 1822.8 ms | 910.6 ms |
-
-Note: numbers are from a local `next dev` instance; use warm requests, not first hits.
+Note: dev-server overheads dominate these numbers (compile/static prerender per route); treat trends, not absolutes, as the signal. The production-observable metric is the dashboard on `app_performance_metrics`, which still shows 0 in this environment (see Known gaps).
 
 ## 6. SLOs (reference)
 

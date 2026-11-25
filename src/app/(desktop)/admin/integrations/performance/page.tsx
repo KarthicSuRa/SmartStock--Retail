@@ -1,5 +1,8 @@
 'use client';
 
+// Static shell — the dashboard reads telemetry and is cheap to render server-side.
+export const dynamic = 'force-static';
+
 // /src/app/(desktop)/admin/integrations/performance/page.tsx
 // Hillclimb dashboard: p50/p95 latency, bytes transferred and overall lag per route.
 
