@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { StoreProvider } from '@/hooks/useStoreContext';
 import { LanguageProvider } from '@/lib/i18n';
+import { PerfTracker } from '@/components/PerfTracker';
 
 export const metadata: Metadata = {
   title: 'SmartStock LiveRetail',
@@ -29,6 +30,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="antialiased">
         <LanguageProvider>
           <StoreProvider>
+            <PerfTracker />
             {children}
           </StoreProvider>
         </LanguageProvider>

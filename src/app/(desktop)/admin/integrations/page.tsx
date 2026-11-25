@@ -297,6 +297,12 @@ export default function IntegrationControlTowerPage() {
 
         <div className="flex items-center gap-2">
           <Link
+            href="/admin/integrations/performance"
+            className="px-4 py-2 rounded-xl bg-violet-500/15 hover:bg-violet-500/25 text-violet-200 text-xs font-bold transition flex items-center gap-2 border border-violet-400/30"
+          >
+            Performance Hillclimb
+          </Link>
+          <Link
             href="/admin/integrations/onboarding"
             className="px-4 py-2 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-100 text-xs font-bold transition flex items-center gap-2 border border-indigo-400/30"
           >
