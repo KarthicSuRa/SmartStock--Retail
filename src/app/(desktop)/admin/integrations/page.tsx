@@ -137,6 +137,10 @@ function StatusBadge({ label, tone, live = false }: { label: string; tone: Tone;
   );
 }
 
+// Static generation: Next serves /admin/integrations from the static cache
+// instead of re-rendering per request — the first few seconds of the hillclimb.
+export const dynamic = 'force-static'
+
 export default function IntegrationControlTowerPage() {
   const [loading, setLoading] = useState(true);
   const [probing, setProbing] = useState(false);

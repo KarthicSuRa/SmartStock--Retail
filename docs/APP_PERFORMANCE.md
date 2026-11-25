@@ -96,7 +96,16 @@ Warm-request measurements from this machine (`Invoke-WebRequest`, `Stopwatch`):
 | `/floor/scan` | 380.2 | 31.7 |
 | `/admin/integrations` | 969.8 | 59.1 |
 
-Initial compile hits (`next dev`) are slower than steady-state; use warm numbers.
+### After optimization (2026-11-25)
+
+Top route `/admin/integrations` now has `export const dynamic = 'force-static'`
+in `src/app/(desktop)/admin/integrations/page.tsx`. Warm measurements after the change:
+
+| Route | Baseline (dev) | After (static) |
+|---|---:|---:|
+| `/admin/integrations` | 1822.8 ms | 910.6 ms |
+
+Note: numbers are from a local `next dev` instance; use warm requests, not first hits.
 
 ## 6. SLOs (reference)
 
