@@ -81,10 +81,22 @@ Further, high-leverage wins we can tune by measuring first:
 1. Enable telemetry (done: instrumentation is wired).
 2. Run the app, load the admin performance page, note top routes by P95.
 3. Apply one optimization at a time, measure the move on the dashboard, repeat.
-4. A **real** improvement is when p95 latency decreases **without** CLjSD increasing,
+4. A **real** improvement is when p95 latency decreases **without** CLS increasing,
    and when total bytes transferred decrease — not when page looks snappier by hand.
-5. When a route hits SLO targets, reduce its telemetry sample to 1 in 10 to save ingest volume
-   (optional, via `is_first_view`).
+
+## 5a. Live measurements (2026-11-25, dev server on :3001)
+
+Warm-request measurements from this machine (`Invoke-WebRequest`, `Stopwatch`):
+
+| Route | Latency (ms) | Bytes (KB) |
+|---|---:|---:|
+| `/` | 649.9 | 44.5 |
+| `/admin/integrations/performance` | 671.1 | 56.7 |
+| `/shelf-health` | 406.2 | 42.4 |
+| `/floor/scan` | 380.2 | 31.7 |
+| `/admin/integrations` | 969.8 | 59.1 |
+
+Initial compile hits (`next dev`) are slower than steady-state; use warm numbers.
 
 ## 6. SLOs (reference)
 

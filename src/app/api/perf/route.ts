@@ -1,7 +1,7 @@
 // /src/app/api/perf/route.ts
 // Telemetry ingest endpoint used by src/lib/performance.ts. Best-effort; never blocks UX.
 
-import { createClient } from '@supabase/supabase-js'
+import { supabase } from '@/lib/supabase'
 import { PerformancePayload } from '@/lib/performance'
 
 const corsHeaders = {
@@ -21,11 +21,8 @@ const MAX_REASONABLE_DURATION = 60000 // guards against timers/bugs on the clien
 
 export async function POST(req: Request) {
   try {
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { persistSession: false, autoRefreshToken: false } },
-    )
+    // Telemetry uses the project client in src/lib/supabase.ts; app_performance_metrics
+    // allows anonymous INSERTs, and writes must never block a customer page.
     const payload = (await req.json()) as PerformancePayload
     const durationMs = Number(payload.duration_ms)
     if (payload.route?.length > 100 || !Number.isFinite(durationMs) || durationMs <= 0 || durationMs > MAX_REASONABLE_DURATION) {
